@@ -1,0 +1,32 @@
+services:
+  app:
+    image: "registry.gitlab.com/phingosoft/es-nuxt:latest"
+    ports:
+      - ${APP_PORT:-3080}:3080
+    volumes:
+      - ./.env:/app/.env
+    restart: always
+    healthcheck:
+      test: ["CMD", "bash", "-c", "</dev/tcp/localhost/3080"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "3"
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    depends_on:
+      - app
+    command: tunnel run --token ${TUNNEL_TOKEN}
+    volumes:
+      - ./cloudflared:/etc/cloudflared
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

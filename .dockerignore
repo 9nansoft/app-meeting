@@ -1,0 +1,17 @@
+Dockerfile
+.dockerignore
+node_modules
+.nuxt
+.output
+.git
+*.log
+npm-debug.log
+local-*
+README.md
+CHANGELOG.md
+LICENSE.md
+demo/
+test/
+.vscode/
+.idea/
+*.md
