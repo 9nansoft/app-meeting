@@ -33,12 +33,12 @@ export const getPasetoKey = (): string => {
 };
 
 // Backward-compatible export
-export const PASETO_KEY = new Proxy({} as string, {
+export const PASETO_KEY: string = new Proxy({} as object, {
   get(_, prop) {
     const key = getPasetoKey();
-    return (key as any)[prop];
+    return (key as unknown as Record<string | symbol, unknown>)[prop as string];
   },
-});
+}) as unknown as string;
 
 export { db, type DbUser as User };
 
@@ -63,6 +63,7 @@ export const authRoutes = new Elysia({ prefix: "/auth" })
         .returning(["id", "username", "role", "name"]);
 
       const newUser = inserted[0] || (await db<DbUser>("users").where({ username: body.username }).first());
+      if (!newUser) throw new Error("user creation failed");
 
       return {
         success: true,
@@ -78,7 +79,8 @@ export const authRoutes = new Elysia({ prefix: "/auth" })
   )
   .post(
     "/login",
-    async ({ body, cookie: { session }, set }) => {
+    async ({ body, cookie, set }) => {
+    const session = cookie.session!;
       await ensureSchema();
       const user = await db<DbUser>("users").where({ username: body.username }).first();
 
@@ -128,11 +130,12 @@ export const authRoutes = new Elysia({ prefix: "/auth" })
       }),
     },
   )
-  .post("/logout", async ({ cookie: { session } }) => {
-    await session.remove();
+  .post("/logout", async ({ cookie }) => {
+    await cookie.session!.remove();
     return { success: true };
   })
-  .get("/me", async ({ cookie: { session }, set }) => {
+  .get("/me", async ({ cookie, set }) => {
+    const session = cookie.session!;
     if (!session.value) {
       set.status = 401;
       return { error: "Not authenticated" };
@@ -141,7 +144,7 @@ export const authRoutes = new Elysia({ prefix: "/auth" })
     let userId: string;
     try {
       const key = getPasetoKey();
-      const { payload } = await decrypt<{ userId: string }>(key, session.value);
+      const { payload } = await decrypt<{ userId: string }>(key, String(session.value));
       userId = payload.userId;
     } catch {
       set.status = 401;

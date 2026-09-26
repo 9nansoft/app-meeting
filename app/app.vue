@@ -1,15 +1,13 @@
 <script setup lang="ts">
 import 'vue-sonner/style.css';
 import { Toaster } from '@/components/ui/sonner';
-import Header from '@/components/Header.vue';
 </script>
 
 <template>
   <div class="min-h-screen bg-background text-foreground font-sans antialiased selection:bg-primary/30">
-    <Header />
-    <main class="container mx-auto px-4 sm:px-8 py-8 w-full max-w-7xl">
+    <NuxtLayout>
       <NuxtPage />
-    </main>
+    </NuxtLayout>
     <Toaster />
   </div>
 </template>
