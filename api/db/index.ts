@@ -3,6 +3,28 @@ import crypto from "node:crypto";
 import dayjs from "dayjs";
 import pg from "pg";
 
+let schemaPromise: Promise<void> | null = null;
+
+/**
+ * สร้าง/ตรวจสอบ schema ทั้งระบบครั้งเดียวต่อ process
+ * (memoize — route ต่าง ๆ เรียกซ้ำได้โดยไม่เป็นภาระฐานข้อมูล)
+ */
+export function ensureSchema(): Promise<void> {
+  if (!schemaPromise) {
+    schemaPromise = import("./schema")
+      .then((m) => m.ensureSchema())
+      .then(() => {
+        console.log("[Knex] Schema ready (AI Smart Meeting).");
+      })
+      .catch((err) => {
+        console.error("[Knex] Error ensuring schema:", err);
+        schemaPromise = null;
+        throw err;
+      });
+  }
+  return schemaPromise;
+}
+
 export const pgTypes = pg.types;
 
 const parseDt = function (val: string | null) {
@@ -83,63 +105,4 @@ export function verifyPassword(password: string, storedHash: string): boolean {
   }
   // Plain text fallback (for existing mock/legacy data)
   return password === storedHash;
-}
-
-let schemaEnsured = false;
-let schemaPromise: Promise<void> | null = null;
-
-export async function ensureSchema(): Promise<void> {
-  if (schemaEnsured) return;
-  if (schemaPromise) return schemaPromise;
-
-  schemaPromise = (async () => {
-    try {
-      const hasTable = await db.schema.hasTable("users");
-      if (!hasTable) {
-        console.log("[Knex] Creating 'users' table in PostgreSQL...");
-        await db.schema.createTable("users", (table) => {
-          table.increments("id").primary();
-          table.string("username", 100).notNullable().unique();
-          table.string("password", 255).notNullable();
-          table.string("role", 50).notNullable().defaultTo("user");
-          table.string("name", 255).nullable();
-          table.string("doctorcode", 50).nullable();
-          table.string("depcode", 50).nullable();
-          table.integer("group_id").nullable();
-          table.timestamp("created_at").defaultTo(db.fn.now());
-          table.timestamp("updated_at").defaultTo(db.fn.now());
-        });
-        console.log("[Knex] 'users' table created successfully.");
-      }
-
-      // Check if table is empty, seed default users
-      const countResult = await db("users").count<{ count: string | number }>("id as count").first();
-      const count = Number(countResult?.count || 0);
-
-      if (count === 0) {
-        console.log("[Knex] Seeding initial admin and demo users...");
-        await db("users").insert([
-          {
-            username: "admin",
-            password: hashPassword("password"),
-            role: "admin",
-            name: "Administrator",
-          },
-          {
-            username: "demo",
-            password: hashPassword("password"),
-            role: "user",
-            name: "Demo User",
-          },
-        ]);
-        console.log("[Knex] Initial users seeded successfully.");
-      }
-
-      schemaEnsured = true;
-    } catch (err) {
-      console.error("[Knex] Error ensuring schema:", err);
-    }
-  })();
-
-  return schemaPromise;
 }

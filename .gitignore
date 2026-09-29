@@ -23,3 +23,6 @@ logs
 .env.*
 !.env.example
 docs
+
+# Uploaded meeting files (PDF / audio)
+storage

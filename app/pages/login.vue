@@ -68,8 +68,8 @@ async function handleLogin() {
         <div class="h-16 w-16 bg-primary/10 text-primary rounded-full flex items-center justify-center mb-4 ring-8 ring-primary/5">
           <Hospital class="w-8 h-8" />
         </div>
-        <h1 class="text-2xl font-bold tracking-tight text-primary">HIS Management</h1>
-        <p class="text-muted-foreground mt-1">HIS User Management</p>
+        <h1 class="text-2xl font-bold tracking-tight text-primary">AI Smart Meeting</h1>
+        <p class="text-muted-foreground mt-1">ระบบจัดการการประชุมอัจฉริยะ</p>
       </div>
 
       <!-- Login Card -->

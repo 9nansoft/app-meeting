@@ -5,17 +5,20 @@ import { db, ensureSchema, hashPassword, type DbUser } from "../db";
 export const usersRoutes = new Elysia().group("/users", (app) =>
   app
     .use(authDerive)
-    // List
+    // List (สำหรับเลือกผู้เข้าร่วม/ผู้นำเสนอ)
     .get("/", async () => {
       await ensureSchema();
       const users = await db<DbUser>("users")
-        .select("id", "username", "role", "name", "doctorcode", "depcode")
+        .select("id", "username", "role", "name", "doctorcode", "depcode", "position", "is_active")
         .orderBy("id", "asc");
 
       return users.map((u) => ({
         id: u.id,
         username: u.username,
         role: u.role,
+        name: (u as any).name || u.username,
+        position: (u as any).position || null,
+        isActive: (u as any).is_active ?? true,
       }));
     })
     // Create
@@ -39,6 +42,7 @@ export const usersRoutes = new Elysia().group("/users", (app) =>
           .returning(["id", "username", "role"]);
 
         const newUser = inserted[0] || (await db<DbUser>("users").where({ username: body.username }).first());
+        if (!newUser) throw new Error("user creation failed");
 
         return {
           success: true,
@@ -96,6 +100,7 @@ export const usersRoutes = new Elysia().group("/users", (app) =>
           .returning(["id", "username", "role"]);
 
         const updatedUser = updated[0] || (await db<DbUser>("users").where({ id: Number(params.id) }).first());
+        if (!updatedUser) throw new Error("user update failed");
 
         return {
           success: true,

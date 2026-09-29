@@ -16,6 +16,11 @@ FROM oven/bun:1-slim AS runner
 WORKDIR /app
 ENV NODE_ENV=production
 
+# tesseract + ภาษาไทย/อังกฤษ สำหรับ OCR ไฟล์ PDF สแกน (fallback อัตโนมัติของระบบ)
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends tesseract-ocr tesseract-ocr-tha tesseract-ocr-eng \
+  && rm -rf /var/lib/apt/lists/*
+
 # Copy only the Nitro output (self-contained server)
 COPY --from=builder /app/.output ./.output
 
