@@ -1,0 +1,330 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Workflow ระบบประชุมอัจฉริยะ | AI Smart Meeting</title>
+  <meta name="description" content="แผนภาพ flow ของระบบบริหารจัดการการประชุม — workflow ครบวงจร สถานะการประชุม/รายงาน และการจองห้องประชุม" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Thai:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --bg: #f1f5f9;
+      --surface: #ffffff;
+      --text: #0f172a;
+      --muted: #64748b;
+      --border: #e2e8f0;
+      --primary: #2563eb;
+      --primary-soft: #eff6ff;
+      --shadow: 0 1px 3px rgba(15, 23, 42, 0.08), 0 4px 16px rgba(15, 23, 42, 0.06);
+    }
+    html[data-theme="dark"] {
+      --bg: #0f172a;
+      --surface: #1e293b;
+      --text: #e2e8f0;
+      --muted: #94a3b8;
+      --border: #334155;
+      --primary: #60a5fa;
+      --primary-soft: #1e3a5f;
+      --shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Noto Sans Thai", "Sarabun", system-ui, -apple-system, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.65;
+    }
+    .topbar {
+      position: sticky; top: 0; z-index: 10;
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 0.75rem 1.5rem;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+    }
+    .brand { display: flex; align-items: center; gap: 0.6rem; font-weight: 700; }
+    .brand .logo {
+      width: 32px; height: 32px; border-radius: 8px;
+      background: linear-gradient(135deg, var(--primary), #a855f7);
+      color: #fff; display: flex; align-items: center; justify-content: center; font-size: 16px;
+    }
+    .brand small { color: var(--muted); font-weight: 400; }
+    .topbar button {
+      border: 1px solid var(--border); background: var(--surface); color: var(--text);
+      border-radius: 8px; padding: 0.45rem 0.8rem; cursor: pointer; font-size: 0.9rem;
+      font-family: inherit;
+    }
+    .topbar button:hover { border-color: var(--primary); }
+    main { max-width: 1100px; margin: 0 auto; padding: 2rem 1.25rem 4rem; }
+    .hero h1 { font-size: clamp(1.4rem, 3vw, 2rem); margin: 0 0 0.4rem; }
+    .hero p { color: var(--muted); margin: 0 0 1rem; }
+    .chips { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 2.5rem; }
+    .chips a {
+      text-decoration: none; color: var(--text);
+      border: 1px solid var(--border); background: var(--surface);
+      padding: 0.35rem 0.85rem; border-radius: 999px; font-size: 0.88rem;
+      transition: border-color 0.15s, color 0.15s;
+    }
+    .chips a:hover { border-color: var(--primary); color: var(--primary); }
+    section { margin-bottom: 3rem; scroll-margin-top: 4.5rem; }
+    section h2 { display: flex; align-items: center; gap: 0.65rem; font-size: 1.25rem; margin: 0 0 0.35rem; }
+    section h2 .num {
+      flex: none; width: 30px; height: 30px; border-radius: 8px;
+      background: var(--primary-soft); color: var(--primary);
+      display: flex; align-items: center; justify-content: center;
+      font-size: 0.95rem; font-weight: 700;
+    }
+    .desc { color: var(--muted); margin: 0 0 1rem; max-width: 72ch; }
+    .card {
+      background: var(--surface); border: 1px solid var(--border); border-radius: 14px;
+      box-shadow: var(--shadow); padding: 1.25rem 1rem; overflow-x: auto;
+    }
+    .card .mermaid { display: flex; justify-content: center; min-width: min-content; }
+    .card svg { max-width: 100%; height: auto; }
+    ol.steps { margin: 1rem 0 0; padding-left: 1.4rem; color: var(--text); }
+    ol.steps li { margin-bottom: 0.3rem; }
+    ol.steps b { color: var(--primary); }
+    .notice {
+      display: none; margin: 1.5rem 0; padding: 0.9rem 1.1rem;
+      border: 1px solid #f59e0b66; background: #fffbeb; color: #92400e;
+      border-radius: 10px; font-size: 0.9rem;
+    }
+    html[data-theme="dark"] .notice { background: #451a03; color: #fcd34d; }
+    footer {
+      border-top: 1px solid var(--border); color: var(--muted);
+      text-align: center; padding: 1.5rem; font-size: 0.85rem;
+    }
+    footer a { color: var(--primary); }
+    @media print {
+      .topbar, .chips { display: none; }
+      body { background: #fff; }
+      .card { box-shadow: none; break-inside: avoid; }
+      section { break-inside: avoid; }
+    }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <div class="logo">📅</div>
+      <div>AI Smart Meeting <small>· Workflow Diagrams</small></div>
+    </div>
+    <button id="themeToggle" type="button">🌙 โหมดมืด</button>
+  </header>
+
+  <main>
+    <div class="hero">
+      <h1>Workflow ระบบบริหารจัดการการประชุมอัจฉริยะ</h1>
+      <p>
+        แผนภาพ flow ของระบบทั้งหมด 4 ภาพ — workflow ครบวงจรตั้งแต่จองห้องจนติดตามงาน,
+        สถานะการประชุม, การอนุมัติรายงาน และ flow การจองห้องประชุม
+        (ที่มา: <code>README.md</code> ของ repository — แก้ไข diagram แล้วอัปเดตทั้งสองไฟล์ให้ตรงกัน)
+      </p>
+      <nav class="chips">
+        <a href="#sec-workflow">1 · Flow ครบวงจร</a>
+        <a href="#sec-states">2 · สถานะการประชุม</a>
+        <a href="#sec-minutes">3 · การอนุมัติรายงาน</a>
+        <a href="#sec-booking">4 · การจองห้อง</a>
+      </nav>
+    </div>
+
+    <div class="notice" id="offlineNotice">
+      ⚠️ โหลดไลบรารี Mermaid จาก CDN ไม่สำเร็จ (อาจออฟไลน์) — diagram จะไม่ถูก render
+      กรุณาเชื่อมต่ออินเทอร์เน็ตแล้วรีเฟรชหน้า หรือดูเวอร์ชัน text ได้ที่ README.md
+    </div>
+
+    <!-- 1) Workflow ครบวงจร -->
+    <section id="sec-workflow">
+      <h2><span class="num">1</span> แผนภาพ Flow ครบวงจร (8 ขั้น)</h2>
+      <p class="desc">
+        การทำงานครบวงจรแบ่งเป็น 3 เฟส — มีจุดควบคุมคุณภาพสำคัญ: มติ/งานที่ AI สกัดติดสถานะ
+        "รอตรวจสอบ" เสมอ ต้องผ่านเลขานุการยืนยัน และรายงานต้องได้รับอนุมัติจากประธานก่อนเผยแพร่
+        งานค้างจะถูกนำกลับเข้าวาระการประชุมครั้งถัดไปแบบ "เรื่องสืบเนื่อง"
+      </p>
+      <div class="card">
+<pre class="mermaid">
+flowchart TD
+    subgraph P1["1. เตรียมการประชุม — เลขานุการ"]
+        A["สร้างการประชุม&lt;br&gt;(เลือกห้อง/เวลา + เชิญผู้เข้าร่วม&lt;br&gt;+ ความต้องการพิเศษถึงเจ้าหน้าที่ห้อง)"]
+        B["จัดทำวาระ + แนบ PDF แยกตามวาระ"]
+        C["AI วิเคราะห์เอกสารอัตโนมัติ&lt;br&gt;(สรุป + เลขหน้าอ้างอิง — ไฟล์สแกนรัน OCR)"]
+        D["Briefing สรุปรวมทุกวาระให้อ่านก่อนประชุม"]
+        A --> B --> C --> D
+    end
+
+    subgraph P2["2. ระหว่างประชุม — เลขานุการ + ผู้เข้าร่วม"]
+        E["อัดเสียงผ่านเบราว์เซอร์&lt;br&gt;(อัปโหลดถอดเสียงทุก 5 นาที)"]
+        F["เลือกวาระปัจจุบัน + transcript พร้อม timestamp"]
+        G["บันทึกมติ / มอบหมายงานระหว่างประชุม"]
+        E --> F --> G
+    end
+
+    subgraph P3["3. หลังประชุม — เลขานุการ และ ประธาน"]
+        H["AI สร้างร่างรายงาน&lt;br&gt;(transcript + สรุปเอกสาร + มติที่บันทึก —&lt;br&gt;มติและงานที่ AI สกัดติดสถานะ รอตรวจสอบ เสมอ)"]
+        I["เลขานุการตรวจแก้ + ยืนยันมติ/งาน"]
+        K{"ประธานอนุมัติรายงาน?"}
+        L["เผยแพร่ + แจ้งเตือนผู้เข้าร่วม&lt;br&gt;(การประชุมเปลี่ยนเป็น เสร็จสิ้น อัตโนมัติ)"]
+        M["ติดตามงานข้ามการประชุม + เตือนงานเลยกำหนด"]
+        H --> I --> K
+        K -->|"อนุมัติ"| L --> M
+        K -->|"ขอแก้ไข"| I
+    end
+
+    D --> E
+    G --> H
+    M -.->|"นำงานค้างเข้าวาระครั้งถัดไป (สืบเนื่อง)"| A
+</pre>
+      </div>
+      <ol class="steps">
+        <li><b>สร้างการประชุม</b> — เลือกห้อง/เวลา/เลขา/ผู้เข้าร่วม (จองห้อง + เชิญในครั้งเดียว) พร้อมความต้องการพิเศษ</li>
+        <li><b>จัดทำวาระ + แนบ PDF</b> แยกตามวาระ</li>
+        <li><b>AI วิเคราะห์เอกสาร</b> อัตโนมัติทันทีที่อัปโหลด (สรุป + เลขหน้าอ้างอิง)</li>
+        <li><b>Briefing ก่อนประชุม</b> — เอกสารสรุปรวมทุกวาระฉบับเดียว</li>
+        <li><b>ประชุมสด</b> — อัดเสียง เลือกวาระปัจจุบัน transcript บันทึกมติ/งานสด</li>
+        <li><b>AI สร้างร่างรายงาน</b> — จากเสียง + สรุปเอกสาร + มติที่บันทึก</li>
+        <li><b>ตรวจสอบและเผยแพร่</b> — เลขาตรวจแก้ → ประธานอนุมัติ → เผยแพร่ + แจ้งเตือน</li>
+        <li><b>ติดตามงาน</b> — สถานะงาน เตือนงานเลยกำหนด นำงานค้างเข้าวาระครั้งถัดไป</li>
+      </ol>
+    </section>
+
+    <!-- 2) สถานะการประชุม -->
+    <section id="sec-states">
+      <h2><span class="num">2</span> สถานะการประชุม</h2>
+      <p class="desc">
+        วงจรชีวิตของการประชุม — ยกเลิกได้จากทุกสถานะก่อนเสร็จสิ้น (การยกเลิกจะยกเลิกการจองห้องให้อัตโนมัติ)
+        สถานะ "เสร็จสิ้น" จะถูกเปลี่ยนอัตโนมัติเมื่อรายงานได้รับอนุมัติและเผยแพร่
+      </p>
+      <div class="card">
+<pre class="mermaid">
+stateDiagram-v2
+    direction LR
+    [*] --> draft: สร้างการประชุม
+    draft --> scheduled: กำหนดห้อง/เวลา + จองห้อง
+    scheduled --> in_progress: เริ่มประชุมสด
+    in_progress --> completed: รายงานได้รับอนุมัติและเผยแพร่
+    draft --> cancelled: ยกเลิก
+    scheduled --> cancelled: ยกเลิก
+    in_progress --> cancelled: ยกเลิก
+    completed --> [*]
+    cancelled --> [*]
+</pre>
+      </div>
+    </section>
+
+    <!-- 3) การอนุมัติรายงาน -->
+    <section id="sec-minutes">
+      <h2><span class="num">3</span> การอนุมัติรายงานการประชุม</h2>
+      <p class="desc">
+        หลักควบคุมความถูกต้องของ AI — รายงานที่เผยแพร่แล้ว (published) จะถูกล็อกแก้ไขไม่ได้
+        หากประธานขอแก้ไข รายงานจะกลับไปสถานะ draft เพื่อให้เลขานุการแก้ไขแล้วขออนุมัติใหม่
+      </p>
+      <div class="card">
+<pre class="mermaid">
+stateDiagram-v2
+    direction LR
+    [*] --> draft: AI สร้างร่างรายงาน
+    draft --> pending_review: เลขานุการตรวจแก้แล้ว ขออนุมัติ
+    pending_review --> published: ประธานอนุมัติ เผยแพร่ + แจ้งเตือน
+    pending_review --> draft: ประธานขอแก้ไข
+    published --> [*]: ล็อกไม่ให้แก้ไข
+</pre>
+      </div>
+    </section>
+
+    <!-- 4) การจองห้องประชุม -->
+    <section id="sec-booking">
+      <h2><span class="num">4</span> Flow การจองห้องประชุม (Module 1)</h2>
+      <p class="desc">
+        เส้นทางการจองครบทั้งสองแบบ (เลือกเอง / AI แนะนำ) พร้อมการตรวจเวลาทับซ้อน
+        และช่องทางที่การจองหนึ่งรายการส่งผลถึง 3 กลุ่มผู้ใช้ — ผู้เข้าร่วม เจ้าหน้าที่ห้อง (staff)
+        และหน้าจอ TV หน้าห้อง
+      </p>
+      <div class="card">
+<pre class="mermaid">
+flowchart TD
+    A["ผู้จองเปิดปฏิทินห้องว่าง (รายวัน/รายสัปดาห์)"] --> B{"เลือกห้องเอง หรือ ให้ AI แนะนำ?"}
+    B -->|"เลือกเอง"| C["เลือกห้อง + ช่วงเวลา&lt;br&gt;+ จองซ้ำตามรอบ (รายวัน/สัปดาห์/เดือน)"]
+    B -->|"AI แนะนำ"| D["ระบุจำนวนคน + อุปกรณ์ + ช่วงเวลา&lt;br&gt;+ ต้องมีสถานที่รับประทานอาหาร (เลือกได้)"]
+    D --> E["AI ให้คะแนนห้องที่ว่าง พร้อมเหตุผล"]
+    E --> C
+    C --> F{"ตรวจเวลาทับซ้อนกับการจองเดิม?"}
+    F -->|"ซ้ำ"| A
+    F -->|"ว่าง"| G["ยืนยันการจอง&lt;br&gt;+ ความต้องการพิเศษของผู้จอง&lt;br&gt;(อาหารว่าง/เครื่องดื่ม/จัดโต๊ะ/อุปกรณ์เพิ่มเติม)"]
+    G --> H["ผู้เข้าร่วมได้รับเชิญ + แจ้งเตือนในระบบ"]
+    G --> I["เจ้าหน้าที่ห้อง (staff) เห็นการจอง&lt;br&gt;ใน ห้องที่ฉันเป็นผู้รับผิดชอบ"]
+    G --> J["หน้าจอ TV หน้าห้อง (ไม่ต้อง login)&lt;br&gt;แสดงกำลังประชุม/ถัดไป/ตารางวันนี้"]
+</pre>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    ที่มา: <a href="../README.md">README.md</a> · render ด้วย <a href="https://mermaid.js.org" target="_blank" rel="noopener">Mermaid v11</a> (CDN)
+    · AI Smart Meeting Management System
+  </footer>
+
+  <script type="module">
+    // ---------- ธีม (light/dark) ----------
+    const THEMES = {
+      light: {
+        primaryColor: "#eff6ff", primaryTextColor: "#0f172a", primaryBorderColor: "#3b82f6",
+        lineColor: "#94a3b8", textColor: "#0f172a",
+        secondaryColor: "#f0fdf4", secondaryBorderColor: "#22c55e",
+        tertiaryColor: "#fefce8", tertiaryBorderColor: "#eab308",
+        noteBkgColor: "#fffbeb", noteTextColor: "#1e293b",
+        fontSize: "14px", fontFamily: '"Noto Sans Thai", "Sarabun", system-ui, sans-serif',
+      },
+      dark: {
+        background: "#0f172a", primaryColor: "#1e293b", primaryTextColor: "#e2e8f0", primaryBorderColor: "#60a5fa",
+        lineColor: "#94a3b8", textColor: "#e2e8f0",
+        secondaryColor: "#14532d", secondaryBorderColor: "#22c55e",
+        tertiaryColor: "#713f12", tertiaryBorderColor: "#eab308",
+        noteBkgColor: "#422006", noteTextColor: "#e2e8f0",
+        fontSize: "14px", fontFamily: '"Noto Sans Thai", "Sarabun", system-ui, sans-serif',
+      },
+    };
+
+    const saved = localStorage.getItem("workflow-theme");
+    const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+    let theme = saved ?? (prefersDark ? "dark" : "light");
+
+    const toggle = document.getElementById("themeToggle");
+    function applyTheme() {
+      document.documentElement.dataset.theme = theme;
+      toggle.textContent = theme === "dark" ? "☀️ โหมดสว่าง" : "🌙 โหมดมืด";
+    }
+    toggle.addEventListener("click", () => {
+      theme = theme === "dark" ? "light" : "dark";
+      localStorage.setItem("workflow-theme", theme);
+      applyTheme();
+      renderAll();
+    });
+    applyTheme();
+
+    // ---------- mermaid ----------
+    let mermaid = null;
+    try {
+      mermaid = (await import("https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs")).default;
+    } catch {
+      document.getElementById("offlineNotice").style.display = "block";
+    }
+
+    // เก็บ source ต้นฉบับไว้เพื่อ re-render ตอนสลับธีม
+    const sources = new Map();
+    document.querySelectorAll("pre.mermaid").forEach((el) => sources.set(el, el.innerHTML));
+
+    async function renderAll() {
+      if (!mermaid) return;
+      mermaid.initialize({ startOnLoad: false, theme: "base", themeVariables: THEMES[theme] });
+      for (const [el, html] of sources) {
+        el.removeAttribute("data-processed");
+        el.innerHTML = html;
+      }
+      await mermaid.run({ nodes: [...sources.keys()] });
+    }
+    await renderAll();
+  </script>
+</body>
+</html>

@@ -22,7 +22,10 @@ logs
 .env
 .env.*
 !.env.example
-docs
+
+# เอกสารออกแบบเดิมเก็บไว้เฉพาะในเครื่อง (ยกเว้นหน้าเว็บ workflow ที่แชร์ได้)
+docs/*
+!docs/workflow.html
 
 # Uploaded meeting files (PDF / audio)
 storage
