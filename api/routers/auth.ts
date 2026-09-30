@@ -89,6 +89,11 @@ export const authRoutes = new Elysia({ prefix: "/auth" })
         return { error: "Invalid credentials" };
       }
 
+      if (user.is_active === false) {
+        set.status = 401;
+        return { error: "บัญชีนี้ถูกปิดใช้งาน กรุณาติดต่อผู้ดูแลระบบ" };
+      }
+
       const key = getPasetoKey();
       const token = await encrypt(
         key,
@@ -153,7 +158,7 @@ export const authRoutes = new Elysia({ prefix: "/auth" })
 
     await ensureSchema();
     const user = await db<DbUser>("users").where({ id: Number(userId) }).first();
-    if (!user) {
+    if (!user || user.is_active === false) {
       set.status = 401;
       return { error: "Session invalid" };
     }

@@ -1,6 +1,6 @@
 export default defineNuxtRouteMiddleware(async (to) => {
-  // หน้าที่เข้าได้โดยไม่ต้อง login: หน้าจอ TV display, login, showcase
-  if (to.path === '/login' || to.path === '/showcase' || to.path.startsWith('/display')) {
+  // หน้าที่เข้าได้โดยไม่ต้อง login: หน้าจอ TV display และหน้า login
+  if (to.path === '/login' || to.path.startsWith('/display')) {
     return
   }
 

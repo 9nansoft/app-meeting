@@ -77,6 +77,9 @@ export interface DbUser {
   password: string;
   role: string;
   name?: string | null;
+  position?: string | null;
+  email?: string | null;
+  is_active?: boolean;
   doctorcode?: string | null;
   depcode?: string | null;
   group_id?: number | null;

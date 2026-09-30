@@ -581,23 +581,42 @@ async function seedDefaults(): Promise<void> {
       { username: "admin", password: hashPassword("password"), role: "admin", name: "ผู้ดูแลระบบ" },
       { username: "secretary", password: hashPassword("password"), role: "secretary", name: "เลขานุการประชุม" },
       { username: "demo", password: hashPassword("password"), role: "user", name: "สมชาย ใจดี" },
+      { username: "staff", password: hashPassword("password"), role: "staff", name: "เจ้าหน้าที่ห้องประชุม", position: "เจ้าหน้าที่กิจการภายใน" },
     ]);
+  } else {
+    // ระบบที่สร้างก่อนมีบทบาท staff — เติมบัญชีตัวอย่างให้ (idempotent)
+    const staffExists = await db("users").where({ username: "staff" }).first();
+    if (!staffExists) {
+      await db("users").insert({
+        username: "staff",
+        password: hashPassword("password"),
+        role: "staff",
+        name: "เจ้าหน้าที่ห้องประชุม",
+        position: "เจ้าหน้าที่กิจการภายใน",
+      });
+    }
   }
 
-  // บทบาท
-  const roleCount = Number((await db("roles").count("id as count").first())?.count || 0);
-  if (roleCount === 0) {
-    await db("roles").insert([
-      { code: "admin", name: "ผู้ดูแลระบบ", description: "จัดการทุกส่วนของระบบ" },
-      { code: "secretary", name: "เลขานุการ", description: "จัดทำวาระ บันทึกการประชุม และตรวจสอบรายงาน" },
-      { code: "member", name: "สมาชิก", description: "เข้าร่วมประชุมและดูเอกสาร" },
-    ]);
+  // บทบาท (เติมบทบาทที่ยังไม่มี เพื่อให้ระบบเดิมได้ staff ด้วย)
+  const existingRoleCodes = new Set(
+    ((await db("roles").select("code")) as Array<{ code: string }>).map((r) => r.code),
+  );
+  const allRoles = [
+    { code: "admin", name: "ผู้ดูแลระบบ", description: "จัดการทุกส่วนของระบบ รวมถึงจัดการบัญชีผู้ใช้" },
+    { code: "secretary", name: "เลขานุการ", description: "จัดทำวาระ บันทึกการประชุม และตรวจสอบรายงาน" },
+    { code: "member", name: "สมาชิก", description: "เข้าร่วมประชุมและดูเอกสาร" },
+    { code: "staff", name: "เจ้าหน้าที่ห้องประชุม", description: "ดูแลห้องประชุมที่รับผิดชอบ และดูตารางการจองของห้อง" },
+  ];
+  const missingRoles = allRoles.filter((r) => !existingRoleCodes.has(r.code));
+  if (missingRoles.length > 0) {
+    await db("roles").insert(missingRoles);
   }
 
   // ห้องประชุม + อุปกรณ์
   const roomCount = Number((await db("meeting_rooms").count("id as count").first())?.count || 0);
   if (roomCount === 0) {
     const [secretaryUser] = await db("users").where({ username: "secretary" }).select("id");
+    const [staffUser] = await db("users").where({ username: "staff" }).select("id");
     const rooms = await db("meeting_rooms")
       .insert([
         {
@@ -611,6 +630,7 @@ async function seedDefaults(): Promise<void> {
         {
           name: "ห้องประชุมบอร์ดรูม", capacity: 12, building: "อาคารบริหาร", floor: "3",
           location: "ห้องผู้อำนวยการ", table_count: 1, chair_count: 14, color: "#7c3aed",
+          responsible_user_id: staffUser?.id ?? null,
           has_dining: true,
           dining_detail: "ห้องรับรองผู้บริหารพร้อมโซนอาหารว่างและกาแฟในตัว",
           description: "ห้องประชุมผู้บริหาร พร้อมชุดประชุมทางไกล",
@@ -618,6 +638,7 @@ async function seedDefaults(): Promise<void> {
         {
           name: "ห้องประชุมเล็ก 1", capacity: 6, building: "อาคารผู้ป่วยนอก (OPD)", floor: "1",
           location: "ใกล้ห้องเวชระเบียน", table_count: 1, chair_count: 8, color: "#059669",
+          responsible_user_id: staffUser?.id ?? null,
           has_dining: false,
           dining_detail: null,
           description: "ห้องประชุมกลุ่มย่อย",

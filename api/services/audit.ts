@@ -12,6 +12,8 @@ export interface AuditEntry {
   userAgent?: string | null;
 }
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 /** บันทึก audit log — ไม่ throw เมื่อบันทึกไม่สำเร็จ เพื่อไม่ให้กระทบธุรกรรมหลัก */
 export async function writeAudit(entry: AuditEntry): Promise<void> {
   try {
@@ -20,7 +22,8 @@ export async function writeAudit(entry: AuditEntry): Promise<void> {
       username: entry.username ?? null,
       action: entry.action,
       entity_type: entry.entityType ?? null,
-      entity_id: entry.entityId ?? null,
+      // คอลัมน์เป็น uuid — entity ที่ใช้ id เป็นตัวเลข (เช่น users) ให้อ้างจาก old/new value แทน
+      entity_id: entry.entityId && UUID_RE.test(entry.entityId) ? entry.entityId : null,
       old_value: entry.oldValue === undefined ? null : JSON.stringify(entry.oldValue),
       new_value: entry.newValue === undefined ? null : JSON.stringify(entry.newValue),
       ip: entry.ip ?? null,
