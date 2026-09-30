@@ -1,10 +1,11 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import ThemeToggle from './ThemeToggle.vue'
 import { useAuth } from '@/composables/useAuth'
 import { useNotifications } from '@/composables/useNotifications'
 import { dayjs } from '@/utils/meeting-format'
 import {
-  CalendarDays, ClipboardList, LayoutDashboard, ListTodo, Bell, LogOut, CheckCheck, Users
+  CalendarDays, ClipboardList, LayoutDashboard, ListTodo, Bell, LogOut, CheckCheck, Users, UserCog
 } from 'lucide-vue-next'
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel,
@@ -18,12 +19,21 @@ const route = useRoute()
 const { user, logout } = useAuth()
 const { notifications, unreadCount, refresh, markRead } = useNotifications()
 
-const nav = [
-  { label: 'Dashboard', to: '/dashboard', icon: LayoutDashboard },
-  { label: 'จองห้องประชุม', to: '/rooms', icon: CalendarDays },
-  { label: 'การประชุม', to: '/meetings', icon: ClipboardList },
-  { label: 'ติดตามงาน', to: '/followup', icon: ListTodo },
-]
+const nav = computed(() => {
+  const items = [
+    { label: 'Dashboard', to: '/dashboard', icon: LayoutDashboard },
+    { label: 'จองห้องประชุม', to: '/rooms', icon: CalendarDays },
+    { label: 'การประชุม', to: '/meetings', icon: ClipboardList },
+    { label: 'ติดตามงาน', to: '/followup', icon: ListTodo },
+  ]
+  if (user.value?.role === 'admin') {
+    items.push({ label: 'จัดการผู้ใช้', to: '/admin', icon: UserCog })
+  }
+  return items
+})
+
+const roleLabel = (role?: string) =>
+  ({ admin: 'ผู้ดูแลระบบ', secretary: 'เลขานุการ', staff: 'เจ้าหน้าที่ห้องประชุม' } as Record<string, string>)[role ?? ''] ?? 'สมาชิก'
 
 async function onNotifClick(n: any) {
   if (n.status === 'unread') await markRead(n.id)
@@ -126,7 +136,7 @@ async function onLogout() {
                 <Users class="w-4 h-4 text-muted-foreground" />
                 <div>
                   <div class="text-sm font-medium">{{ user?.name || user?.username }}</div>
-                  <div class="text-xs text-muted-foreground">บทบาท: {{ user?.role === 'admin' ? 'ผู้ดูแลระบบ' : user?.role === 'secretary' ? 'เลขานุการ' : 'สมาชิก' }}</div>
+                  <div class="text-xs text-muted-foreground">บทบาท: {{ roleLabel(user?.role) }}</div>
                 </div>
               </div>
             </DropdownMenuLabel>

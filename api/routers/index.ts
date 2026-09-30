@@ -1,6 +1,6 @@
 import { Elysia } from "elysia";
 import { authRoutes } from "./auth";
-import { usersRoutes } from "./users";
+import { usersRoutes, usersAdminRoutes } from "./users";
 import { roomsRoutes } from "./rooms";
 import { bookingsRoutes } from "./bookings";
 import { meetingsRoutes } from "./meetings";
@@ -17,7 +17,8 @@ import { searchRoutes } from "./search";
 
 export const routers = new Elysia()
   .use(authRoutes)
-  .use(usersRoutes)
+  .use(usersRoutes) // รายชื่อผู้ใช้ (login)
+  .use(usersAdminRoutes) // จัดการบัญชีผู้ใช้ (admin)
   // AI Smart Meeting modules
   .use(roomsRoutes) // Module 1: จองห้องประชุม
   .use(bookingsRoutes)

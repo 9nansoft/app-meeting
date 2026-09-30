@@ -48,7 +48,6 @@ import ShowcaseSection from '@/components/ShowcaseSection.vue'
 
 // Custom Elysia Components
 import AuthShowcase from '@/components/AuthShowcase.vue'
-import UsersCrud from '@/components/UsersCrud.vue'
 import { useNuxtApp } from '#imports'
 
 import { type DateValue } from 'reka-ui'
@@ -67,7 +66,6 @@ const emotionPulseClass = ref('')
 
 // Elysia Auth State
 const currentUser = ref<{ id: number; username: string; role: string } | null>(null)
-const crudTableRef = ref<InstanceType<typeof UsersCrud> | null>(null)
 
 async function fetchMe() {
   const { data, error } = await $api.auth.me.get()
@@ -75,11 +73,6 @@ async function fetchMe() {
     currentUser.value = null
   } else {
     currentUser.value = data.user
-  }
-  
-  // Refresh CRUD table if it exists
-  if (crudTableRef.value) {
-    crudTableRef.value.fetchUsers()
   }
 }
 
@@ -557,13 +550,10 @@ function showToast() {
     </ShowcaseSection>
 
     <!-- Section: Elysia Integration -->
-    <ShowcaseSection title="Elysia Full-Stack Integration" description="Showcasing end-to-end type safety, Cookie Auth, and CRUD operations with Elysia & Nuxt via Eden Treaty.">
+    <ShowcaseSection title="Elysia Full-Stack Integration" description="Showcasing end-to-end type safety and Cookie Auth with Elysia & Nuxt via Eden Treaty. (การจัดการผู้ใช้ย้ายไปหน้า /admin สำหรับแอดมิน)">
       <div class="grid lg:grid-cols-12 gap-8 items-start">
-        <div class="lg:col-span-4">
+        <div class="lg:col-span-4 lg:col-start-5">
           <AuthShowcase :current-user="currentUser" @logged-in="fetchMe" />
-        </div>
-        <div class="lg:col-span-8">
-          <UsersCrud ref="crudTableRef" />
         </div>
       </div>
     </ShowcaseSection>
