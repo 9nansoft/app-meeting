@@ -521,6 +521,35 @@ export async function ensureSchema(): Promise<void> {
     });
   }
 
+  // Log ความมั่นคงปลอดภัยตาม พ.ร.บ. การกระทำความผิดเกี่ยวกับคอมพิวเตอร์ (ฉบับที่ 2) พ.ศ. 2560 ม.26
+  // — ใช้ bigserial เพื่อให้ลำดับแถว = ลำดับการเขียน และ prev_hash/entry_hash เป็น hash chain กันแก้ไข
+  if (!(await db.schema.hasTable("security_logs"))) {
+    await db.schema.createTable("security_logs", (table) => {
+      table.bigIncrements("id").primary();
+      // auth.login_success | auth.login_failed | auth.login_blocked | auth.logout |
+      // auth.invalid_token | access.unauthorized | access.forbidden | http.request |
+      // user.register | log.exported | log.integrity_failed
+      table.string("event_type", 50).notNullable();
+      table.string("severity", 10).notNullable().defaultTo("info"); // info | warning | error
+      table.integer("user_id").nullable().references("id").inTable("users").onDelete("SET NULL");
+      table.string("username", 100).nullable();
+      table.string("ip", 64).nullable();
+      table.string("user_agent", 500).nullable();
+      table.string("method", 10).nullable();
+      table.string("path", 500).nullable();
+      table.integer("status_code").nullable();
+      table.integer("duration_ms").nullable();
+      table.jsonb("detail").nullable();
+      table.string("prev_hash", 64).notNullable();
+      table.string("entry_hash", 64).notNullable();
+      table.timestamp("created_at", { useTz: true }).notNullable().defaultTo(db.fn.now());
+      table.index(["event_type", "created_at"]);
+      table.index(["created_at"]);
+      table.index(["username"]);
+      table.index(["ip"]);
+    });
+  }
+
   if (!(await db.schema.hasTable("system_settings"))) {
     await db.schema.createTable("system_settings", (table) => {
       table.string("key", 100).primary();
@@ -712,6 +741,20 @@ async function seedDefaults(): Promise<void> {
       { entity_type: "transcript", retain_days: 365, action: "archive" },
       { entity_type: "document", retain_days: 1825, action: "archive" },
       { entity_type: "minutes", retain_days: 3650, action: "archive" },
+      // log ตาม พ.ร.บ. คอมพิวเตอร์ ม.26 — กฎหมายกำหนดขั้นต่ำ 90 วัน
+      // (ระบบบังคับใช้ floor 90 วันในโค้ดเสมอ แม้ค่านี้ถูกแก้ต่ำกว่า)
+      { entity_type: "security_log", retain_days: 90, action: "delete" },
+      { entity_type: "audit_log", retain_days: 365, action: "delete" },
     ]);
+  } else {
+    // ระบบเดิม — เติม policy ของ log ให้ (idempotent)
+    const logPolicies = [
+      { entity_type: "security_log", retain_days: 90, action: "delete" },
+      { entity_type: "audit_log", retain_days: 365, action: "delete" },
+    ];
+    for (const p of logPolicies) {
+      const exists = await db("retention_policies").where({ entity_type: p.entity_type }).first();
+      if (!exists) await db("retention_policies").insert(p);
+    }
   }
 }

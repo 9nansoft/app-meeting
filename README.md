@@ -187,14 +187,25 @@ AI_EMBED_MODEL=text-embedding-3-small  # embedding สำหรับค้น�
 
 **การควบคุมความถูกต้องของ AI**: มติ/งานที่ AI สกัดมีสถานะ `pending_review` เสมอ ต้องผ่านการยืนยันของเลขานุการก่อน และรายงานต้องได้รับอนุมัติจากประธานการประชุมก่อนเผยแพร่ (ระบบจะเปลี่ยนสถานะการประชุมเป็น "เสร็จสิ้น" อัตโนมัติ)
 
-## ฐานข้อมูล (6 กลุ่ม / 30 ตาราง)
+## ฐานข้อมูล (6 กลุ่ม / 31 ตาราง)
 
 - **G1 ผู้ใช้และห้อง**: `users`, `roles`, `user_roles`, `meeting_rooms` (รวมตึก/ชั้น/โต๊ะ/เก้าอี้/ผู้รับผิดชอบ/สถานที่รับประทานอาหาร), `room_images` (รูปห้อง+รูปปก), `room_equipment`, `room_bookings` (รวมความต้องการพิเศษของผู้จอง)
 - **G2 การประชุมและวาระ**: `meetings`, `meeting_participants`, `meeting_agendas`, `meeting_documents`, `agenda_ai_summaries`
 - **G3 เสียงและ Transcript**: `meeting_recordings`, `transcription_jobs`, `transcript_segments`, `agenda_transcript_links`
 - **G4 ผลการประชุม**: `meeting_minutes`, `meeting_decisions`, `meeting_action_items`, `meeting_attendance`, `meeting_approvals`
 - **G5 AI และงานเบื้องหลัง**: `ai_jobs`, `ai_job_results`, `ai_model_usage`, `ai_prompts`, `document_chunks`
-- **G6 ระบบ**: `notifications`, `audit_logs`, `system_settings`, `retention_policies`
+- **G6 ระบบ**: `notifications`, `audit_logs`, `system_settings`, `retention_policies`, `security_logs`
+
+## Log ตาม พ.ร.บ. คอมพิวเตอร์
+
+ระบบบันทึก log เพื่อปฏิบัติตาม **พ.ร.บ. การกระทำความผิดเกี่ยวกับคอมพิวเตอร์ (ฉบับที่ 2) พ.ศ. 2560 มาตรา 26** ซึ่งกำหนดให้เก็บ "ข้อมูลจราจรคอมพิวเตอร์" ไว้ไม่น้อยกว่า **90 วัน**:
+
+- **สิ่งที่บันทึก** (ตาราง `security_logs`): เข้าสู่ระบบสำเร็จ/ไม่สำเร็จ, บัญชีถูกปิดใช้งาน, ออกจากระบบ, session/token ไม่ถูกต้อง, เรียก API โดยไม่มีสิทธิ์ (401), บทบาทไม่เพียงพอ (403), สมัครบัญชีใหม่, **access log ทุก request** (method/path/status/ระยะเวลา), การส่งออก log — พร้อม **ใคร (user) เมื่อไร (timestamp) จากไหน (IP จาก X-Forwarded-For/X-Real-IP + User-Agent)**
+- **กันแก้ไข (tamper-evident)**: ทุกแถวมี `entry_hash` = SHA-256 ของแถวก่อนหน้า + เนื้อหาแถว (hash chain) — แก้หรือลบแถวใดจะถูกตรวจพบทันที ระบบตรวจความถูกต้องอัตโนมัติทุก 1 ชั่วโมง และบันทึกเหตุ `log.integrity_failed` หากพบความผิดปกติ
+- **เก็บขั้นต่ำ 90 วัน**: ระบบลบเฉพาะแถวที่เกินอายุ retention และ**บังคับใช้ floor 90 วันในโค้ดเสมอ** (ตั้ง policy ต่ำกว่านี้ไม่ได้ — API จะปฏิเสธ) ลบ log หมดอายุวันละครั้ง
+- **หน้าตรวจสอบ**: เมนู **Log ระบบ** (`/admin/logs` — สำหรับ admin) กรองตามเหตุการณ์/ระดับ/ผู้ใช้/IP/ช่วงวันที่, ดูสถิติ login ไม่สำเร็จราย IP/บัญชี (7 วันล่าสุด), ตรวจ integrity ของ hash chain, และ**ส่งออก CSV** (มี BOM เปิดใน Excel ภาษาไทยได้) เพื่อมอบให้เจ้าหน้าที่เมื่อมีคำขอตามกฎหมาย — การส่งออกทุกครั้งถูกบันทึกใน log ด้วย
+
+โค้ดหลักอยู่ที่ `api/services/logger.ts` (บริการ log + hash chain + retention) และ `api/index.ts` (access log hook ทุก request) ส่วน `audit_logs` เดิมยังเก็บธุรกรรมทางธุรกิจ (สร้าง/แก้ไข/ลบข้อมูล) คู่กันไป
 
 ## คำสั่งที่มีประโยชน์
 

@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **ระบบ Log ตาม พ.ร.บ. คอมพิวเตอร์**: ตาราง `security_logs` บันทึกข้อมูลจราจรคอมพิวเตอร์ตาม พ.ร.บ. การกระทำความผิดเกี่ยวกับคอมพิวเตอร์ (ฉบับที่ 2) พ.ศ. 2560 ม.26 — เหตุการณ์ login สำเร็จ/ไม่สำเร็จ, logout, session ไม่ถูกต้อง, การเข้าถึงไม่ได้รับอนุญาต (401/403), สมัครบัญชี, และ access log ทุก request พร้อม IP/User-Agent/เวลา/สถานะ/ระยะเวลา
+- **Hash chain กันแก้ไข log**: ทุกแถวผูก `entry_hash` (SHA-256) กับแถวก่อนหน้า ตรวจจับการแก้ไข/ลบ log ภายหลังได้ — ตรวจอัตโนมัติทุกชั่วโมง + API ตรวจด้วยมือ
+- **Retention บังคับขั้นต่ำ 90 วันตามกฎหมาย**: ลบ log หมดอายุรายวันโดยใช้ค่าไม่ต่ำกว่า 90 วันเสมอ (ตั้งต่ำกว่านี้ผ่าน API ไม่ได้)
+- **หน้า "Log ระบบ" สำหรับแอดมิน** (`/admin/logs`): กรอง/ค้นหา log, สถิติ login ไม่สำเร็จราย IP/บัญชี, ปุ่มตรวจ integrity, ส่งออก CSV (UTF-8 BOM เปิดใน Excel ภาษาไทยได้) — การส่งออกถูกบันทึกใน log ด้วย
+- **API ใหม่**: `GET /admin/security-logs` (กรอง/แบ่งหน้า), `GET /admin/security-logs/stats`, `GET /admin/security-logs/verify`, `GET /admin/security-logs/export` (admin เท่านั้น)
+- ดึง IP ผู้เรียกจริงจาก `X-Forwarded-For` / `X-Real-IP` รองรับการอยู่หลัง reverse proxy
+
 ## [1.0.0] - 2026-02-22
 
 ### Added

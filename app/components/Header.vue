@@ -5,7 +5,7 @@ import { useAuth } from '@/composables/useAuth'
 import { useNotifications } from '@/composables/useNotifications'
 import { dayjs } from '@/utils/meeting-format'
 import {
-  CalendarDays, ClipboardList, LayoutDashboard, ListTodo, Bell, LogOut, CheckCheck, Users, UserCog
+  CalendarDays, ClipboardList, LayoutDashboard, ListTodo, Bell, LogOut, CheckCheck, Users, UserCog, ScrollText
 } from 'lucide-vue-next'
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel,
@@ -28,9 +28,17 @@ const nav = computed(() => {
   ]
   if (user.value?.role === 'admin') {
     items.push({ label: 'จัดการผู้ใช้', to: '/admin', icon: UserCog })
+    items.push({ label: 'Log ระบบ', to: '/admin/logs', icon: ScrollText })
   }
   return items
 })
+
+/** เมนู active เฉพาะ path ตรงหรือเป็น segment ลูก — เลือกเมนูที่ตรงที่สุด (/admin/logs ไม่ให้สว่าง /admin ด้วย) */
+const isActive = (to: string) => {
+  const match = (t: string) => route.path === t || route.path.startsWith(t + '/')
+  const best = [...nav.value].filter((i) => match(i.to)).sort((a, b) => b.to.length - a.to.length)[0]
+  return best?.to === to
+}
 
 const roleLabel = (role?: string) =>
   ({ admin: 'ผู้ดูแลระบบ', secretary: 'เลขานุการ', staff: 'เจ้าหน้าที่ห้องประชุม' } as Record<string, string>)[role ?? ''] ?? 'สมาชิก'
@@ -63,7 +71,7 @@ async function onLogout() {
           :key="item.to"
           :to="item.to"
           class="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-colors"
-          :class="route.path.startsWith(item.to)
+          :class="isActive(item.to)
             ? 'bg-primary/10 text-primary'
             : 'text-muted-foreground hover:text-foreground hover:bg-muted'"
         >

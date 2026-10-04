@@ -1,5 +1,6 @@
 import { Elysia, t, type AnyElysia } from "elysia";
 import { authDerive } from "../middleware/auth";
+import { getClientIp, writeSecurityLog } from "../services/logger";
 
 /** ประเภท user ที่ได้จาก PASETO session */
 export interface AuthUser {
@@ -13,8 +14,21 @@ export interface AuthUser {
 export const requireRole =
   (...roles: string[]) =>
   (app: AnyElysia) =>
-    app.use(authDerive).onBeforeHandle(({ user, set }) => {
+    app.use(authDerive).onBeforeHandle(({ user, set, request }) => {
       if (roles.length && user && !roles.includes(user.role) && user.role !== "admin") {
+        // พยายามใช้สิทธิ์ที่ตัวเองไม่มี — บันทึกไว้ตรวจสอบการเจาะระบบตาม พ.ร.บ. คอมพิวเตอร์
+        void writeSecurityLog({
+          eventType: "access.forbidden",
+          severity: "warning",
+          userId: Number(user.id),
+          username: user.username,
+          ip: getClientIp(request.headers),
+          userAgent: request.headers.get("user-agent"),
+          method: request.method,
+          path: new URL(request.url).pathname,
+          statusCode: 403,
+          detail: { requiredRoles: roles, actualRole: user.role },
+        });
         set.status = 403;
         return { error: `ต้องมีบทบาท: ${roles.join(" หรือ ")} (บทบาทปัจจุบัน: ${user.role})` };
       }

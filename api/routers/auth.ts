@@ -1,6 +1,7 @@
 import { Elysia, t } from "elysia";
 import { encrypt, decrypt } from "paseto-ts/v4";
 import { db, ensureSchema, hashPassword, verifyPassword, type DbUser } from "../db";
+import { getClientIp, writeSecurityLog } from "../services/logger";
 
 let _PASETO_KEY: string | null = null;
 
@@ -45,7 +46,7 @@ export { db, type DbUser as User };
 export const authRoutes = new Elysia({ prefix: "/auth" })
   .post(
     "/register",
-    async ({ body, set }) => {
+    async ({ body, set, request }) => {
       await ensureSchema();
       const exists = await db<DbUser>("users").where({ username: body.username }).first();
       if (exists) {
@@ -65,6 +66,17 @@ export const authRoutes = new Elysia({ prefix: "/auth" })
       const newUser = inserted[0] || (await db<DbUser>("users").where({ username: body.username }).first());
       if (!newUser) throw new Error("user creation failed");
 
+      void writeSecurityLog({
+        eventType: "user.register",
+        userId: newUser.id,
+        username: newUser.username,
+        ip: getClientIp(request.headers),
+        userAgent: request.headers.get("user-agent"),
+        method: "POST",
+        path: "/auth/register",
+        statusCode: 200,
+      });
+
       return {
         success: true,
         user: { id: newUser.id, username: newUser.username },
@@ -79,17 +91,43 @@ export const authRoutes = new Elysia({ prefix: "/auth" })
   )
   .post(
     "/login",
-    async ({ body, cookie, set }) => {
+    async ({ body, cookie, set, request }) => {
     const session = cookie.session!;
+      const ip = getClientIp(request.headers);
+      const userAgent = request.headers.get("user-agent");
       await ensureSchema();
       const user = await db<DbUser>("users").where({ username: body.username }).first();
 
       if (!user || !verifyPassword(body.password, user.password)) {
+        // login ไม่สำเร็จ — บันทึกไว้ตรวจการเดารหัสผ่าน (ตาม พ.ร.บ. คอมพิวเตอร์)
+        void writeSecurityLog({
+          eventType: "auth.login_failed",
+          severity: "warning",
+          username: body.username,
+          ip,
+          userAgent,
+          method: "POST",
+          path: "/auth/login",
+          statusCode: 401,
+          detail: { reason: user ? "invalid_password" : "unknown_username" },
+        });
         set.status = 401;
         return { error: "Invalid credentials" };
       }
 
       if (user.is_active === false) {
+        void writeSecurityLog({
+          eventType: "auth.login_blocked",
+          severity: "warning",
+          userId: user.id,
+          username: user.username,
+          ip,
+          userAgent,
+          method: "POST",
+          path: "/auth/login",
+          statusCode: 401,
+          detail: { reason: "account_disabled" },
+        });
         set.status = 401;
         return { error: "บัญชีนี้ถูกปิดใช้งาน กรุณาติดต่อผู้ดูแลระบบ" };
       }
@@ -116,6 +154,17 @@ export const authRoutes = new Elysia({ prefix: "/auth" })
         path: "/",
       });
 
+      void writeSecurityLog({
+        eventType: "auth.login_success",
+        userId: user.id,
+        username: user.username,
+        ip,
+        userAgent,
+        method: "POST",
+        path: "/auth/login",
+        statusCode: 200,
+      });
+
       return {
         success: true,
         user: {
@@ -135,11 +184,34 @@ export const authRoutes = new Elysia({ prefix: "/auth" })
       }),
     },
   )
-  .post("/logout", async ({ cookie }) => {
+  .post("/logout", async ({ cookie, request }) => {
+    // ได้ตัวตนจาก session ก่อนลบ cookie (ถ้าอ่านได้) เพื่อบันทึกว่าใครออกจากระบบ
+    let userId: number | null = null;
+    let username: string | null = null;
+    try {
+      const { payload } = await decrypt<{ userId: string; username: string }>(
+        getPasetoKey(),
+        String(cookie.session?.value ?? ""),
+      );
+      userId = Number(payload.userId);
+      username = payload.username;
+    } catch {
+      // session หมดอายุ/ไม่ถูกต้อง — ยังบันทึกการ logout โดยไม่ระบุตัวตน
+    }
     await cookie.session!.remove();
+    void writeSecurityLog({
+      eventType: "auth.logout",
+      userId,
+      username,
+      ip: getClientIp(request.headers),
+      userAgent: request.headers.get("user-agent"),
+      method: "POST",
+      path: "/auth/logout",
+      statusCode: 200,
+    });
     return { success: true };
   })
-  .get("/me", async ({ cookie, set }) => {
+  .get("/me", async ({ cookie, set, request }) => {
     const session = cookie.session!;
     if (!session.value) {
       set.status = 401;
@@ -152,6 +224,16 @@ export const authRoutes = new Elysia({ prefix: "/auth" })
       const { payload } = await decrypt<{ userId: string }>(key, String(session.value));
       userId = payload.userId;
     } catch {
+      void writeSecurityLog({
+        eventType: "auth.invalid_token",
+        severity: "warning",
+        ip: getClientIp(request.headers),
+        userAgent: request.headers.get("user-agent"),
+        method: "GET",
+        path: "/auth/me",
+        statusCode: 401,
+        detail: { reason: "session_invalid" },
+      });
       set.status = 401;
       return { error: "Session invalid" };
     }
