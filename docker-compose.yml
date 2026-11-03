@@ -2,9 +2,12 @@ services:
   app:
     image: "registry.gitlab.com/phingosoft/es-nuxt:latest"
     ports:
-      - ${APP_PORT:-3080}:3080
+      # เปิดเฉพาะ localhost — ผู้ใช้ภายนอกเข้าผ่าน Cloudflare Tunnel เท่านั้น
+      # (ถ้าเปิดสู่ภายนอกตรง ๆ จะปลอม CF-Connecting-IP ใน security log ได้)
+      # ถ้า Tunnel ตั้ง service เป็น IP ของเครื่อง host ให้เปลี่ยนเป็น http://app:3080 หรือกำหนด APP_BIND
+      - ${APP_BIND:-127.0.0.1}:${APP_PORT:-3080}:3080
     volumes:
-      - ./.env:/app/.env
+      - ./.env:/app/.env:ro
     restart: always
     healthcheck:
       test: ["CMD", "bash", "-c", "</dev/tcp/localhost/3080"]

@@ -12,7 +12,7 @@ export const notificationsRoutes = new Elysia({ prefix: "/notifications" })
       const q = db("notifications")
         .where({ user_id: Number(user!.id) })
         .orderBy("created_at", "desc")
-        .limit(query.limit ?? 50);
+        .limit(Math.min(query.limit ?? 50, 200));
       if (query.unreadOnly === "true") q.where({ status: "unread" });
       const notifications = await q;
       const [{ count } = { count: 0 }] = await db("notifications")

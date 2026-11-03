@@ -2,7 +2,8 @@ import { Elysia, t } from "elysia";
 import { db, ensureSchema } from "../db";
 import { requireRole, readUploadBody } from "./_lib";
 import { writeAudit } from "../services/audit";
-import { saveFile, readStorageFile, deleteFile, mimeFromName } from "../services/storage";
+import { saveFile, readStorageFile, deleteFile, detectUploadMime, fileResponse } from "../services/storage";
+import { authorizeMeeting, canManageMeetingRow } from "../services/access";
 import { enqueueJob } from "../services/jobs";
 
 const MAX_FILE_SIZE = 100 * 1024 * 1024; // 100MB
@@ -19,7 +20,8 @@ async function autoAnalyzeEnabled(): Promise<boolean> {
 }
 
 export const documentsRoutes = new Elysia({ prefix: "/meetings" })
-  .use(requireRole("user", "secretary"))
+  // สิทธิ์ตัดสินตามความเกี่ยวข้องกับการประชุม (authorizeMeeting) ไม่ใช่ชื่อบทบาท
+  .use(requireRole())
   /**
    * อัปโหลดเอกสาร PDF ของวาระ (multipart form-data: field "file")
    * ระบบจะเก็บเป็นเวอร์ชันใหม่ถ้าวาระนี้มีเอกสารชื่อเดียวกัน
@@ -29,10 +31,11 @@ export const documentsRoutes = new Elysia({ prefix: "/meetings" })
     "/:id/documents",
     async ({ params, body, user, set, headers }) => {
       await ensureSchema();
-      const meeting = await db("meetings").where({ id: params.id }).first();
-      if (!meeting) {
-        set.status = 404;
-        return { error: "ไม่พบการประชุม" };
+      // ผู้เข้าร่วมการประชุม (เช่นผู้นำเสนอวาระ) อัปโหลดเอกสารได้
+      const access = await authorizeMeeting(user, params.id, "view");
+      if (!access.ok) {
+        set.status = access.status;
+        return { error: access.error };
       }
 
       const upload = await readUploadBody(body);
@@ -44,10 +47,19 @@ export const documentsRoutes = new Elysia({ prefix: "/meetings" })
         set.status = 413;
         return { error: "ไฟล์ใหญ่เกิน 100MB" };
       }
-      const fileName = decodeURIComponent(
-        (headers["x-file-name"] as string) || upload.fileName,
-      ).slice(0, 500);
-      const mimeType = upload.mimeType || mimeFromName(fileName);
+      let fileName = upload.fileName;
+      try {
+        fileName = decodeURIComponent((headers["x-file-name"] as string) || upload.fileName);
+      } catch {
+        /* header เข้ารหัสไม่ถูกต้อง — ใช้ชื่อไฟล์จาก multipart */
+      }
+      fileName = fileName.replace(/[\u0000-\u001f\u007f\/\\]/g, "_").slice(0, 500);
+      // ตรวจชนิดไฟล์จากเนื้อไฟล์จริง (ไม่เชื่อ Content-Type จาก client)
+      const mimeType = detectUploadMime("document", upload.buffer, fileName);
+      if (!mimeType) {
+        set.status = 415;
+        return { error: "รองรับเฉพาะไฟล์ PDF, Word, Excel หรือ PowerPoint" };
+      }
 
       let agendaId: string | null = null;
       const agendaHeader = headers["x-agenda-id"] as string | undefined;
@@ -126,19 +138,10 @@ export const documentsRoutes = new Elysia({ prefix: "/meetings" })
         set.status = 404;
         return { error: "ไม่พบเอกสาร" };
       }
-      const meeting = await db("meetings").where({ id: doc.meeting_id }).first();
-      const isParticipant =
-        meeting.organizer_id === Number(user!.id) ||
-        meeting.secretary_id === Number(user!.id) ||
-        user!.role === "admin";
-      if (!isParticipant) {
-        const member = await db("meeting_participants")
-          .where({ meeting_id: doc.meeting_id, user_id: Number(user!.id) })
-          .first();
-        if (!member) {
-          set.status = 403;
-          return { error: "เอกสารนี้เปิดเฉพาะผู้เข้าร่วมการประชุม" };
-        }
+      const access = await authorizeMeeting(user, doc.meeting_id, "view");
+      if (!access.ok) {
+        set.status = 403;
+        return { error: "เอกสารนี้เปิดเฉพาะผู้เข้าร่วมการประชุม" };
       }
       const buffer = await readStorageFile(doc.storage_key);
       await writeAudit({
@@ -148,13 +151,7 @@ export const documentsRoutes = new Elysia({ prefix: "/meetings" })
         entityType: "meeting_documents",
         entityId: doc.id,
       });
-      return new Response(new Uint8Array(buffer), {
-        headers: {
-          "Content-Type": doc.mime_type,
-          "Content-Disposition": `inline; filename*=UTF-8''${encodeURIComponent(doc.file_name)}`,
-          "Cache-Control": "private, max-age=300",
-        },
-      });
+      return fileResponse(buffer, doc.mime_type, { fileName: doc.file_name });
     },
     { params: t.Object({ docId: t.String() }) },
   )
@@ -169,10 +166,14 @@ export const documentsRoutes = new Elysia({ prefix: "/meetings" })
         set.status = 404;
         return { error: "ไม่พบเอกสาร" };
       }
-      const meeting = await db("meetings").where({ id: doc.meeting_id }).first();
+      const access = await authorizeMeeting(user, doc.meeting_id, "view");
+      if (!access.ok) {
+        set.status = 404;
+        return { error: "ไม่พบเอกสาร" };
+      }
       const isOwner =
         doc.uploader_id === Number(user!.id) ||
-        meeting.organizer_id === Number(user!.id) ||
+        access.meeting.organizer_id === Number(user!.id) ||
         user!.role === "admin";
       if (!isOwner) {
         set.status = 403;
@@ -202,6 +203,15 @@ export const documentsRoutes = new Elysia({ prefix: "/meetings" })
       if (!doc) {
         set.status = 404;
         return { error: "ไม่พบเอกสาร" };
+      }
+      const access = await authorizeMeeting(user, doc.meeting_id, "view");
+      if (!access.ok) {
+        set.status = 404;
+        return { error: "ไม่พบเอกสาร" };
+      }
+      if (doc.uploader_id !== Number(user!.id) && !canManageMeetingRow(user, access.meeting)) {
+        set.status = 403;
+        return { error: "สั่งวิเคราะห์ได้เฉพาะผู้อัปโหลด ผู้จัดประชุม เลขานุการ หรือผู้ดูแลระบบ" };
       }
       if (doc.mime_type !== "application/pdf") {
         set.status = 400;
@@ -234,10 +244,10 @@ export const documentsRoutes = new Elysia({ prefix: "/meetings" })
     "/:id/briefing",
     async ({ params, user, set }) => {
       await ensureSchema();
-      const meeting = await db("meetings").where({ id: params.id }).first();
-      if (!meeting) {
-        set.status = 404;
-        return { error: "ไม่พบการประชุม" };
+      const access = await authorizeMeeting(user, params.id, "manage");
+      if (!access.ok) {
+        set.status = access.status;
+        return { error: access.error };
       }
       const jobId = await enqueueJob({
         jobType: "generate_briefing",
@@ -261,8 +271,13 @@ export const documentsRoutes = new Elysia({ prefix: "/meetings" })
   // ดู Briefing ล่าสุด
   .get(
     "/:id/briefing",
-    async ({ params, set }) => {
+    async ({ params, user, set }) => {
       await ensureSchema();
+      const access = await authorizeMeeting(user, params.id, "view");
+      if (!access.ok) {
+        set.status = access.status;
+        return { error: access.error };
+      }
       const job = await db("ai_jobs")
         .where({ meeting_id: params.id, job_type: "generate_briefing", status: "completed" })
         .orderBy("completed_at", "desc")

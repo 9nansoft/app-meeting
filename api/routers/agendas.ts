@@ -2,6 +2,7 @@ import { Elysia, t } from "elysia";
 import { db, ensureSchema } from "../db";
 import { requireRole } from "./_lib";
 import { writeAudit } from "../services/audit";
+import { authorizeMeeting } from "../services/access";
 
 const AGENDA_TYPES = ["information", "approval", "follow_up", "consideration"];
 
@@ -30,10 +31,10 @@ export const agendasRoutes = new Elysia({ prefix: "/meetings" })
     "/:id/agendas",
     async ({ params, body, user, set }) => {
       await ensureSchema();
-      const meeting = await db("meetings").where({ id: params.id }).first();
-      if (!meeting) {
-        set.status = 404;
-        return { error: "ไม่พบการประชุม" };
+      const access = await authorizeMeeting(user, params.id, "manage");
+      if (!access.ok) {
+        set.status = access.status;
+        return { error: access.error };
       }
       if (!AGENDA_TYPES.includes(body.agendaType)) {
         set.status = 400;
@@ -87,6 +88,15 @@ export const agendasRoutes = new Elysia({ prefix: "/meetings" })
         set.status = 404;
         return { error: "ไม่พบวาระ" };
       }
+      const access = await authorizeMeeting(user, existing.meeting_id, "manage");
+      if (!access.ok) {
+        set.status = access.status;
+        return { error: access.status === 404 ? "ไม่พบวาระ" : access.error };
+      }
+      if (body.agendaType !== undefined && !AGENDA_TYPES.includes(body.agendaType)) {
+        set.status = 400;
+        return { error: `ประเภทวาระไม่ถูกต้อง (ต้องเป็น: ${AGENDA_TYPES.join(", ")})` };
+      }
       await db("meeting_agendas")
         .where({ id: params.agendaId })
         .update({
@@ -134,6 +144,11 @@ export const agendasRoutes = new Elysia({ prefix: "/meetings" })
         set.status = 404;
         return { error: "ไม่พบวาระ" };
       }
+      const access = await authorizeMeeting(user, existing.meeting_id, "manage");
+      if (!access.ok) {
+        set.status = access.status;
+        return { error: access.status === 404 ? "ไม่พบวาระ" : access.error };
+      }
       await db("meeting_agendas").where({ id: params.agendaId }).del();
       await writeAudit({
         userId: Number(user!.id),
@@ -151,8 +166,13 @@ export const agendasRoutes = new Elysia({ prefix: "/meetings" })
   // จัดลำดับวาระใหม่
   .post(
     "/:id/agendas/reorder",
-    async ({ params, body, user }) => {
+    async ({ params, body, user, set }) => {
       await ensureSchema();
+      const access = await authorizeMeeting(user, params.id, "manage");
+      if (!access.ok) {
+        set.status = access.status;
+        return { error: access.error };
+      }
       for (const item of body.order) {
         await db("meeting_agendas")
           .where({ id: item.agendaId, meeting_id: params.id })
@@ -182,10 +202,10 @@ export const agendasRoutes = new Elysia({ prefix: "/meetings" })
   // รายละเอียดวาระ + สรุป AI + เอกสาร
   .get(
     "/agendas/:agendaId",
-    async ({ params, set }) => {
+    async ({ params, user, set }) => {
       await ensureSchema();
       const detail = await agendaWithExtras(params.agendaId);
-      if (!detail) {
+      if (!detail || !(await authorizeMeeting(user, detail.agenda.meeting_id, "view")).ok) {
         set.status = 404;
         return { error: "ไม่พบวาระ" };
       }

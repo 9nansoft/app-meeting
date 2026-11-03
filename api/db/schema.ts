@@ -1,5 +1,5 @@
 import { db } from "./index";
-import { hashPassword } from "./index";
+import { hashPassword, generateStrongPassword, validatePasswordPolicy } from "./index";
 
 /**
  * AI Smart Meeting System — PostgreSQL schema (Knex)
@@ -601,28 +601,45 @@ async function addColumnIfMissing(
 
 /** ข้อมูลเริ่มต้นของระบบ (idempotent) */
 async function seedDefaults(): Promise<void> {
-  // ผู้ใช้เริ่มต้น
+  // ผู้ใช้เริ่มต้น — ไม่ใช้รหัสตั้งต้นที่เดาได้อีกต่อไป
+  //  - admin: ใช้ SEED_ADMIN_PASSWORD หรือสุ่มรหัสแล้วพิมพ์ลง console ครั้งเดียว
+  //  - บัญชีตัวอย่าง (secretary/demo/staff) สร้างเฉพาะเมื่อ SEED_DEMO_USERS=true
   const userCount = Number(
     (await db("users").count("id as count").first())?.count || 0,
   );
   if (userCount === 0) {
-    await db("users").insert([
-      { username: "admin", password: hashPassword("password"), role: "admin", name: "ผู้ดูแลระบบ" },
-      { username: "secretary", password: hashPassword("password"), role: "secretary", name: "เลขานุการประชุม" },
-      { username: "demo", password: hashPassword("password"), role: "user", name: "สมชาย ใจดี" },
-      { username: "staff", password: hashPassword("password"), role: "staff", name: "เจ้าหน้าที่ห้องประชุม", position: "เจ้าหน้าที่กิจการภายใน" },
-    ]);
-  } else {
-    // ระบบที่สร้างก่อนมีบทบาท staff — เติมบัญชีตัวอย่างให้ (idempotent)
-    const staffExists = await db("users").where({ username: "staff" }).first();
-    if (!staffExists) {
-      await db("users").insert({
-        username: "staff",
-        password: hashPassword("password"),
-        role: "staff",
-        name: "เจ้าหน้าที่ห้องประชุม",
-        position: "เจ้าหน้าที่กิจการภายใน",
-      });
+    const seedPassword = (envName: string): { password: string; generated: boolean } => {
+      const fromEnv = process.env[envName]?.trim();
+      if (fromEnv) {
+        if (validatePasswordPolicy(fromEnv)) {
+          throw new Error(`${envName} does not meet the password policy (min 8 chars, not trivially guessable)`);
+        }
+        return { password: fromEnv, generated: false };
+      }
+      return { password: generateStrongPassword(), generated: true };
+    };
+    const admin = seedPassword("SEED_ADMIN_PASSWORD");
+    await db("users").insert({
+      username: "admin",
+      password: hashPassword(admin.password),
+      role: "admin",
+      name: "ผู้ดูแลระบบ",
+    });
+    if (admin.generated) {
+      console.warn(
+        `[Seed] สร้างบัญชี admin แล้ว — รหัสผ่านเริ่มต้น: ${admin.password}  (แสดงครั้งเดียว กรุณาเปลี่ยนรหัสหลังเข้าสู่ระบบ)`,
+      );
+    }
+    if (process.env.SEED_DEMO_USERS === "true") {
+      const demo = seedPassword("SEED_DEMO_PASSWORD");
+      await db("users").insert([
+        { username: "secretary", password: hashPassword(demo.password), role: "secretary", name: "เลขานุการประชุม" },
+        { username: "demo", password: hashPassword(demo.password), role: "user", name: "สมชาย ใจดี" },
+        { username: "staff", password: hashPassword(demo.password), role: "staff", name: "เจ้าหน้าที่ห้องประชุม", position: "เจ้าหน้าที่กิจการภายใน" },
+      ]);
+      if (demo.generated) {
+        console.warn(`[Seed] สร้างบัญชีตัวอย่าง secretary/demo/staff — รหัสผ่าน: ${demo.password}`);
+      }
     }
   }
 

@@ -1,6 +1,6 @@
 import { Elysia, t } from "elysia";
 import { db, ensureSchema } from "../db";
-import { requireRole } from "./_lib";
+import { requireRole, forbidUnlessAdmin } from "./_lib";
 import { writeAudit } from "../services/audit";
 import { isAiConfigured, AI_MODEL, AI_BASE_URL } from "../services/ai/provider";
 import {
@@ -29,7 +29,7 @@ export const adminRoutes = new Elysia({ prefix: "/admin" })
     "/audit-logs",
     async ({ query }) => {
       await ensureSchema();
-      const q = db("audit_logs").orderBy("created_at", "desc").limit(query.limit ?? 100);
+      const q = db("audit_logs").orderBy("created_at", "desc").limit(Math.min(query.limit ?? 100, 1000));
       if (query.entityType) q.where({ entity_type: query.entityType });
       if (query.entityId) q.where({ entity_id: query.entityId });
       if (query.action) q.where("action", "ilike", `%${query.action}%`);
@@ -50,7 +50,7 @@ export const adminRoutes = new Elysia({ prefix: "/admin" })
     "/ai-jobs",
     async ({ query }) => {
       await ensureSchema();
-      const q = db("ai_jobs").orderBy("created_at", "desc").limit(query.limit ?? 100);
+      const q = db("ai_jobs").orderBy("created_at", "desc").limit(Math.min(query.limit ?? 100, 1000));
       if (query.status) q.where({ status: query.status });
       if (query.jobType) q.where({ job_type: query.jobType });
       return { jobs: await q };
@@ -72,7 +72,10 @@ export const adminRoutes = new Elysia({ prefix: "/admin" })
 
   .put(
     "/settings/:key",
-    async ({ params, body, user }) => {
+    async ({ params, body, user, set, request }) => {
+      // แก้การตั้งค่าระบบได้เฉพาะ admin (secretary ดูได้อย่างเดียว)
+      const denied = forbidUnlessAdmin(user, set, request);
+      if (denied) return denied;
       await ensureSchema();
       let value: unknown;
       try {
@@ -103,7 +106,7 @@ export const adminRoutes = new Elysia({ prefix: "/admin" })
       return { success: true };
     },
     {
-      params: t.Object({ key: t.String() }),
+      params: t.Object({ key: t.String({ pattern: "^[a-z0-9_.-]{1,100}$" }) }),
       body: t.Object({ value: t.Any() }),
     },
   )
@@ -116,7 +119,9 @@ export const adminRoutes = new Elysia({ prefix: "/admin" })
 
   .put(
     "/retention/:id",
-    async ({ params, body, user, set }) => {
+    async ({ params, body, user, set, request }) => {
+      const denied = forbidUnlessAdmin(user, set, request);
+      if (denied) return denied;
       await ensureSchema();
       const policy = await db("retention_policies").where({ id: params.id }).first();
       if (!policy) {

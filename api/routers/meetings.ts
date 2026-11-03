@@ -3,6 +3,7 @@ import { db, ensureSchema } from "../db";
 import { requireRole } from "./_lib";
 import { writeAudit } from "../services/audit";
 import { notify } from "../services/notifications";
+import { authorizeMeeting, viewableMeetingIdsQuery } from "../services/access";
 
 export const MEETING_STATUSES = ["draft", "scheduled", "in_progress", "completed", "cancelled"];
 
@@ -52,7 +53,7 @@ export const meetingsRoutes = new Elysia({ prefix: "/meetings" })
   // รายการประชุม (กรองตามสถานะ/ช่วงเวลา/ค้นหา)
   .get(
     "/",
-    async ({ query }) => {
+    async ({ query, user }) => {
       await ensureSchema();
       const q = db("meetings")
         .leftJoin("users as organizer", "organizer.id", "=", "meetings.organizer_id")
@@ -65,8 +66,11 @@ export const meetingsRoutes = new Elysia({ prefix: "/meetings" })
       if (query.from) q.where("meetings.start_time", ">=", query.from);
       if (query.to) q.where("meetings.start_time", "<", query.to);
       if (query.q) q.where("meetings.title", "ilike", `%${query.q}%`);
+      // เห็นเฉพาะการประชุมที่ตนเกี่ยวข้อง (admin/secretary เห็นทั้งหมด)
+      const viewable = viewableMeetingIdsQuery(user!);
+      if (viewable) q.whereIn("meetings.id", viewable);
 
-      const meetings = await q.limit(query.limit ?? 100);
+      const meetings = await q.limit(Math.min(query.limit ?? 100, 500));
       return { meetings };
     },
     {
@@ -75,7 +79,7 @@ export const meetingsRoutes = new Elysia({ prefix: "/meetings" })
         from: t.Optional(t.String()),
         to: t.Optional(t.String()),
         q: t.Optional(t.String()),
-        limit: t.Optional(t.Number()),
+        limit: t.Optional(t.Number({ minimum: 1, maximum: 500 })),
         order: t.Optional(t.String()),
       }),
     },
@@ -91,6 +95,14 @@ export const meetingsRoutes = new Elysia({ prefix: "/meetings" })
       if (start >= end) {
         set.status = 400;
         return { error: "เวลาเริ่มต้นต้องก่อนเวลาสิ้นสุด" };
+      }
+
+      if (body.previousMeetingId) {
+        const prev = await authorizeMeeting(user, body.previousMeetingId, "view");
+        if (!prev.ok) {
+          set.status = 400;
+          return { error: "ไม่พบการประชุมครั้งก่อนที่ระบุ" };
+        }
       }
 
       // จองห้อง (ถ้าระบุ) — ตรวจซ้ำก่อนสร้างการประชุม
@@ -209,8 +221,13 @@ export const meetingsRoutes = new Elysia({ prefix: "/meetings" })
   // รายละเอียดการประชุม (วาระ เอกสาร ผู้เข้าร่วม ห้อง)
   .get(
     "/:id",
-    async ({ params, set }) => {
+    async ({ params, user, set }) => {
       await ensureSchema();
+      const access = await authorizeMeeting(user, params.id, "view");
+      if (!access.ok) {
+        set.status = access.status;
+        return { error: access.error };
+      }
       const detail = await meetingDetail(params.id);
       if (!detail) {
         set.status = 404;
@@ -226,16 +243,12 @@ export const meetingsRoutes = new Elysia({ prefix: "/meetings" })
     "/:id",
     async ({ params, body, user, set }) => {
       await ensureSchema();
-      const existing = await db("meetings").where({ id: params.id }).first();
-      if (!existing) {
-        set.status = 404;
-        return { error: "ไม่พบการประชุม" };
+      const access = await authorizeMeeting(user, params.id, "manage");
+      if (!access.ok) {
+        set.status = access.status;
+        return { error: access.error };
       }
-      const isOwner = existing.organizer_id === Number(user!.id) || existing.created_by === Number(user!.id);
-      if (!isOwner && user!.role !== "admin" && user!.role !== "secretary") {
-        set.status = 403;
-        return { error: "แก้ไขได้เฉพาะผู้จัดประชุม เลขานุการ หรือ admin" };
-      }
+      const existing = access.meeting;
       await db("meetings")
         .where({ id: params.id })
         .update({
@@ -278,16 +291,12 @@ export const meetingsRoutes = new Elysia({ prefix: "/meetings" })
     "/:id/status",
     async ({ params, body, user, set }) => {
       await ensureSchema();
-      const existing = await db("meetings").where({ id: params.id }).first();
-      if (!existing) {
-        set.status = 404;
-        return { error: "ไม่พบการประชุม" };
+      const access = await authorizeMeeting(user, params.id, "manage");
+      if (!access.ok) {
+        set.status = access.status;
+        return { error: access.error };
       }
-      const isOwner = existing.organizer_id === Number(user!.id) || user!.role === "admin" || user!.role === "secretary";
-      if (!isOwner) {
-        set.status = 403;
-        return { error: "เปลี่ยนสถานะได้เฉพาะผู้จัดประชุม เลขานุการ หรือ admin" };
-      }
+      const existing = access.meeting;
       if (!MEETING_STATUSES.includes(body.status)) {
         set.status = 400;
         return { error: `สถานะไม่ถูกต้อง (ต้องเป็น: ${MEETING_STATUSES.join(", ")})` };
@@ -318,11 +327,12 @@ export const meetingsRoutes = new Elysia({ prefix: "/meetings" })
     "/:id",
     async ({ params, user, set }) => {
       await ensureSchema();
-      const existing = await db("meetings").where({ id: params.id }).first();
-      if (!existing) {
-        set.status = 404;
-        return { error: "ไม่พบการประชุม" };
+      const access = await authorizeMeeting(user, params.id, "view");
+      if (!access.ok) {
+        set.status = access.status;
+        return { error: access.error };
       }
+      const existing = access.meeting;
       const isOwner = existing.organizer_id === Number(user!.id) || existing.created_by === Number(user!.id);
       if (!isOwner && user!.role !== "admin") {
         set.status = 403;
@@ -348,11 +358,12 @@ export const meetingsRoutes = new Elysia({ prefix: "/meetings" })
     "/:id/participants",
     async ({ params, body, user, set }) => {
       await ensureSchema();
-      const meeting = await db("meetings").where({ id: params.id }).first();
-      if (!meeting) {
-        set.status = 404;
-        return { error: "ไม่พบการประชุม" };
+      const access = await authorizeMeeting(user, params.id, "manage");
+      if (!access.ok) {
+        set.status = access.status;
+        return { error: access.error };
       }
+      const meeting = access.meeting;
       const inserted: any[] = [];
       for (const userId of body.userIds) {
         const exists = await db("meeting_participants")
@@ -401,6 +412,11 @@ export const meetingsRoutes = new Elysia({ prefix: "/meetings" })
     "/:id/participants/:userId",
     async ({ params, user, set }) => {
       await ensureSchema();
+      const access = await authorizeMeeting(user, params.id, "manage");
+      if (!access.ok) {
+        set.status = access.status;
+        return { error: access.error };
+      }
       await db("meeting_participants")
         .where({ meeting_id: params.id, user_id: Number(params.userId) })
         .del();

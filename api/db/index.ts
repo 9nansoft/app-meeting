@@ -106,6 +106,43 @@ export function verifyPassword(password: string, storedHash: string): boolean {
       return false;
     }
   }
-  // Plain text fallback (for existing mock/legacy data)
-  return password === storedHash;
+  // ข้อมูลเก่าที่เก็บรหัสเป็น plaintext — เทียบแบบ constant-time
+  // (login สำเร็จแล้วระบบจะ re-hash ทันที ดู passwordNeedsRehash)
+  const a = crypto.createHash("sha256").update(password).digest();
+  const b = crypto.createHash("sha256").update(storedHash).digest();
+  return crypto.timingSafeEqual(a, b);
+}
+
+/** รหัสผ่านที่เก็บแบบเก่า (plaintext) ต้องแปลงเป็น scrypt hash */
+export function passwordNeedsRehash(storedHash: string): boolean {
+  return !storedHash.includes(":");
+}
+
+/** hash หลอกสำหรับกรณีไม่พบ username — ให้เวลาตอบสนองเท่ากับกรณีรหัสผิด (กัน user enumeration) */
+export const DUMMY_PASSWORD_HASH = hashPassword(crypto.randomBytes(16).toString("hex"));
+
+export const PASSWORD_MIN_LENGTH = 8;
+export const PASSWORD_MAX_LENGTH = 256;
+
+/** ตรวจนโยบายรหัสผ่าน — คืนข้อความ error หรือ null ถ้าผ่าน */
+export function validatePasswordPolicy(password: string, username?: string): string | null {
+  if (password.length < PASSWORD_MIN_LENGTH) {
+    return `รหัสผ่านต้องมีความยาวอย่างน้อย ${PASSWORD_MIN_LENGTH} ตัวอักษร`;
+  }
+  if (password.length > PASSWORD_MAX_LENGTH) {
+    return `รหัสผ่านต้องยาวไม่เกิน ${PASSWORD_MAX_LENGTH} ตัวอักษร`;
+  }
+  const lowered = password.toLowerCase();
+  if (["password", "12345678", "123456789", "qwerty123", "11111111"].includes(lowered)) {
+    return "รหัสผ่านนี้คาดเดาง่ายเกินไป";
+  }
+  if (username && lowered === username.toLowerCase()) {
+    return "รหัสผ่านต้องไม่เหมือนชื่อผู้ใช้";
+  }
+  return null;
+}
+
+/** สุ่มรหัสผ่านที่แข็งแรง (ใช้กับบัญชีเริ่มต้น/บัญชีที่ admin สร้างโดยไม่ระบุรหัส) */
+export function generateStrongPassword(): string {
+  return crypto.randomBytes(12).toString("base64url");
 }

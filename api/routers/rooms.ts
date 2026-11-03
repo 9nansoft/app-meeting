@@ -1,9 +1,9 @@
 import { Elysia, t } from "elysia";
 import { db, ensureSchema } from "../db";
-import { requireRole, readUploadBody } from "./_lib";
+import { requireRole, readUploadBody, forbidUnlessAdmin } from "./_lib";
 import { writeAudit } from "../services/audit";
 import { chatCompletion, isAiConfigured } from "../services/ai/provider";
-import { saveFile, readStorageFile, deleteFile } from "../services/storage";
+import { saveFile, readStorageFile, deleteFile, detectUploadMime, fileResponse } from "../services/storage";
 
 export interface RoomRow {
   id: string;
@@ -121,8 +121,10 @@ export const roomsRoutes = new Elysia({ prefix: "/rooms" })
   // สร้างห้องใหม่ (admin)
   .post(
     "/",
-    async ({ body, user, set }) => {
+    async ({ body, user, set, request }) => {
       await ensureSchema();
+      const denied = forbidUnlessAdmin(user, set, request);
+      if (denied) return denied;
       if (body.responsibleUserId) {
         const responsible = await db("users").where({ id: body.responsibleUserId }).first();
         if (!responsible) {
@@ -197,8 +199,10 @@ export const roomsRoutes = new Elysia({ prefix: "/rooms" })
   // แก้ไขห้อง (admin)
   .put(
     "/:id",
-    async ({ params, body, user, set }) => {
+    async ({ params, body, user, set, request }) => {
       await ensureSchema();
+      const denied = forbidUnlessAdmin(user, set, request);
+      if (denied) return denied;
       const exists = await db("meeting_rooms").where({ id: params.id }).first();
       if (!exists) {
         set.status = 404;
@@ -288,8 +292,10 @@ export const roomsRoutes = new Elysia({ prefix: "/rooms" })
   // ลบห้อง (admin)
   .delete(
     "/:id",
-    async ({ params, user, set }) => {
+    async ({ params, user, set, request }) => {
       await ensureSchema();
+      const denied = forbidUnlessAdmin(user, set, request);
+      if (denied) return denied;
       const exists = await db("meeting_rooms").where({ id: params.id }).first();
       if (!exists) {
         set.status = 404;
@@ -312,8 +318,10 @@ export const roomsRoutes = new Elysia({ prefix: "/rooms" })
   // อัปโหลดรูปห้อง (multipart field "file" หรือ "files" ได้หลายไฟล์)
   .post(
     "/:id/images",
-    async ({ params, body, user, set }) => {
+    async ({ params, body, user, set, request }) => {
       await ensureSchema();
+      const denied = forbidUnlessAdmin(user, set, request);
+      if (denied) return denied;
       const room = await db("meeting_rooms").where({ id: params.id }).first();
       if (!room) {
         set.status = 404;
@@ -338,14 +346,17 @@ export const roomsRoutes = new Elysia({ prefix: "/rooms" })
       const created = [];
       for (const file of files) {
         const upload = await readUploadBody(file);
-        if (!upload || !upload.mimeType.startsWith("image/")) continue;
+        if (!upload) continue;
+        // ตรวจจากเนื้อไฟล์จริง: JPEG/PNG/WebP/GIF เท่านั้น (ไม่รับ SVG — กัน Stored XSS)
+        const mimeType = detectUploadMime("image", upload.buffer, file.name || "room.jpg");
+        if (!mimeType) continue;
         const stored = await saveFile("documents", file.name || "room.jpg", upload.buffer);
         const inserted: any[] = await db("room_images")
           .insert({
             room_id: params.id,
             storage_key: stored.storageKey,
             file_name: (file.name || "room.jpg").slice(0, 500),
-            mime_type: upload.mimeType,
+            mime_type: mimeType,
             file_size: stored.size,
             is_cover: countBefore === 0 && created.length === 0,
             sort_order: countBefore + created.length,
@@ -386,12 +397,7 @@ export const roomsRoutes = new Elysia({ prefix: "/rooms" })
         return { error: "ไม่พบรูป" };
       }
       const buffer = await readStorageFile(image.storage_key);
-      return new Response(new Uint8Array(buffer), {
-        headers: {
-          "Content-Type": image.mime_type,
-          "Cache-Control": "public, max-age=86400",
-        },
-      });
+      return fileResponse(buffer, image.mime_type, { cacheControl: "private, max-age=86400" });
     },
     { params: t.Object({ imageId: t.String() }) },
   )
@@ -399,8 +405,10 @@ export const roomsRoutes = new Elysia({ prefix: "/rooms" })
   // ตั้งรูปปก
   .put(
     "/images/:imageId/cover",
-    async ({ params, user, set }) => {
+    async ({ params, user, set, request }) => {
       await ensureSchema();
+      const denied = forbidUnlessAdmin(user, set, request);
+      if (denied) return denied;
       const image = await db("room_images").where({ id: params.imageId }).first();
       if (!image) {
         set.status = 404;
@@ -424,8 +432,10 @@ export const roomsRoutes = new Elysia({ prefix: "/rooms" })
   // ลบรูป
   .delete(
     "/images/:imageId",
-    async ({ params, user, set }) => {
+    async ({ params, user, set, request }) => {
       await ensureSchema();
+      const denied = forbidUnlessAdmin(user, set, request);
+      if (denied) return denied;
       const image = await db("room_images").where({ id: params.imageId }).first();
       if (!image) {
         set.status = 404;
