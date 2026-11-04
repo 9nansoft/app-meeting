@@ -91,13 +91,13 @@ export const authRoutes = new Elysia({ prefix: "/auth" })
       }
       const ip = getClientIp(request.headers);
       const ipKey = ip ?? "unknown";
-      const wait = registerByIp.retryAfter(ipKey);
+      const wait = await registerByIp.retryAfter(ipKey);
       if (wait > 0) {
         set.status = 429;
         set.headers["retry-after"] = String(wait);
         return { error: "สมัครบ่อยเกินไป กรุณาลองใหม่ภายหลัง" };
       }
-      registerByIp.hit(ipKey);
+      await registerByIp.hit(ipKey);
 
       const username = body.username.trim();
       if (!/^[A-Za-z0-9._-]{3,50}$/.test(username)) {
@@ -162,10 +162,11 @@ export const authRoutes = new Elysia({ prefix: "/auth" })
       // ป้องกันการเดารหัสผ่าน: จำกัดต่อ IP และต่อ username+IP
       const ipKey = ip ?? "unknown";
       const accountKey = `${username.toLowerCase()}|${ipKey}`;
-      const wait = Math.max(
-        ip ? loginAttemptsByIp.retryAfter(ipKey) : 0,
+      const [ipWait, accountWait] = await Promise.all([
+        ip ? loginAttemptsByIp.retryAfter(ipKey) : Promise.resolve(0),
         loginFailuresByAccount.retryAfter(accountKey),
-      );
+      ]);
+      const wait = Math.max(ipWait, accountWait);
       if (wait > 0) {
         void writeSecurityLog({
           eventType: "auth.login_blocked",
@@ -182,7 +183,7 @@ export const authRoutes = new Elysia({ prefix: "/auth" })
         set.headers["retry-after"] = String(wait);
         return { error: `พยายามเข้าสู่ระบบบ่อยเกินไป กรุณาลองใหม่ในอีก ${Math.ceil(wait / 60)} นาที` };
       }
-      if (ip) loginAttemptsByIp.hit(ipKey);
+      if (ip) await loginAttemptsByIp.hit(ipKey);
 
       await ensureSchema();
       const user = await db<DbUser>("users").where({ username }).first();
@@ -190,7 +191,7 @@ export const authRoutes = new Elysia({ prefix: "/auth" })
       const passwordOk = verifyPassword(body.password, user?.password ?? DUMMY_PASSWORD_HASH) && !!user;
 
       if (!user || !passwordOk) {
-        loginFailuresByAccount.hit(accountKey);
+        await loginFailuresByAccount.hit(accountKey);
         // login ไม่สำเร็จ — บันทึกไว้ตรวจการเดารหัสผ่าน (ตาม พ.ร.บ. คอมพิวเตอร์)
         void writeSecurityLog({
           eventType: "auth.login_failed",
@@ -224,7 +225,7 @@ export const authRoutes = new Elysia({ prefix: "/auth" })
         return { error: "บัญชีนี้ถูกปิดใช้งาน กรุณาติดต่อผู้ดูแลระบบ" };
       }
 
-      loginFailuresByAccount.reset(accountKey);
+      await loginFailuresByAccount.reset(accountKey);
 
       // รหัสผ่านเก่าที่เก็บเป็น plaintext → แปลงเป็น scrypt hash ทันที
       if (passwordNeedsRehash(user.password)) {
