@@ -6,8 +6,11 @@ services:
       # (ถ้าเปิดสู่ภายนอกตรง ๆ จะปลอม CF-Connecting-IP ใน security log ได้)
       # ถ้า Tunnel ตั้ง service เป็น IP ของเครื่อง host ให้เปลี่ยนเป็น http://app:3080 หรือกำหนด APP_BIND
       - ${APP_BIND:-127.0.0.1}:${APP_PORT:-3080}:3080
-    volumes:
-      - ./.env:/app/.env:ro
+    # ส่งค่าใน .env เป็น environment variable (Docker อ่านไฟล์บน host เอง)
+    # แทนการ mount ไฟล์เข้า container — container รันเป็นผู้ใช้ bun (ไม่ใช่ root)
+    # จึงอ่าน .env ที่ตั้งสิทธิ์ 600 root ไม่ได้ และไฟล์ secret ไม่ต้องอยู่ใน container
+    env_file:
+      - .env
     environment:
       # rate limit (login/register/csp-report) ใช้ตัวนับร่วมกันใน Valkey — ถ้า Valkey ล่ม แอปใช้ตัวนับในหน่วยความจำแทน
       REDIS_URL: redis://:${VALKEY_PASSWORD:?ตั้ง VALKEY_PASSWORD ใน .env (สร้างด้วย openssl rand -hex 32)}@valkey:6379
