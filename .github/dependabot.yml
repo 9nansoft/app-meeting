@@ -1,0 +1,78 @@
+# Dependabot — ตรวจและเปิด PR อัปเกรด dependency อัตโนมัติ
+# เอกสาร: https://docs.github.com/code-security/dependabot/working-with-dependabot/dependabot-options-reference
+#
+# - version updates: รายสัปดาห์ (จันทร์ 06:00 น. เวลาไทย) และมี cooldown ไม่หยิบเวอร์ชันที่เพิ่งออก
+#   ลดความเสี่ยงจากแพ็กเกจที่ถูกยึด/ปล่อยผิดพลาด (supply-chain) และให้เวลาชุมชนเจอบั๊กก่อน
+# - security updates: ไม่ติด cooldown — เปิดใช้ที่ Settings → Code security → Dependabot security updates
+# - minor/patch รวมเป็น PR เดียวต่อกลุ่ม (production / development) ส่วน major แยก PR ละตัวเพื่อรีวิวทีละเรื่อง
+version: 2
+updates:
+  # ---------- JavaScript (Bun: package.json + bun.lock) ----------
+  - package-ecosystem: "bun"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "Asia/Bangkok"
+    open-pull-requests-limit: 5
+    cooldown:
+      default-days: 7
+      semver-major-days: 30
+      semver-minor-days: 14
+      semver-patch-days: 7
+    groups:
+      production-minor-patch:
+        applies-to: "version-updates"
+        dependency-type: "production"
+        update-types:
+          - "minor"
+          - "patch"
+      development-minor-patch:
+        applies-to: "version-updates"
+        dependency-type: "development"
+        update-types:
+          - "minor"
+          - "patch"
+      # รวม security update หลายตัวไว้ใน PR เดียว
+      security:
+        applies-to: "security-updates"
+        patterns:
+          - "*"
+    ignore:
+      # @vee-validate/zod และ shadcn-vue ยังรองรับแค่ zod 3 — อัปเป็น zod 4 เมื่อทั้งสองรองรับแล้ว
+      - dependency-name: "zod"
+        update-types: ["version-update:semver-major"]
+    commit-message:
+      prefix: "chore(deps)"
+      prefix-development: "chore(deps-dev)"
+
+  # ---------- Base image ใน Dockerfile (oven/bun) ----------
+  - package-ecosystem: "docker"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "Asia/Bangkok"
+    cooldown:
+      default-days: 7
+    commit-message:
+      prefix: "chore(docker)"
+
+  # ---------- Image ใน docker-compose.yml (cloudflared) ----------
+  # ถ้า pin ด้วย tag@digest Dependabot จะอัปเดตทั้ง tag และ digest ให้
+  - package-ecosystem: "docker-compose"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "Asia/Bangkok"
+    cooldown:
+      default-days: 14
+    ignore:
+      # image ของแอปเอง (สร้างจาก GitLab CI) — ไม่ต้องให้ Dependabot ดูแล
+      - dependency-name: "registry.gitlab.com/phingosoft/es-nuxt"
+    commit-message:
+      prefix: "chore(deploy)"
