@@ -37,7 +37,8 @@ export type SecurityEventType =
   | "http.request" // access log ทุก request
   | "user.register"
   | "log.exported" // ผู้ดูแลส่งออก log
-  | "log.integrity_failed"; // ตรวจพบว่า hash chain ขาด/ถูกแก้
+  | "log.integrity_failed" // ตรวจพบว่า hash chain ขาด/ถูกแก้
+  | "csp.violation"; // เบราว์เซอร์รายงานการละเมิด Content-Security-Policy
 
 export interface SecurityLogEntry {
   eventType: SecurityEventType;
