@@ -12,8 +12,8 @@ import { RateLimiter } from "../services/ratelimit";
 
 const MAX_BODY_BYTES = 16 * 1024;
 const MAX_REPORTS_PER_REQUEST = 10;
-const reportsByIp = new RateLimiter(30, 10 * 60 * 1000);
-const reportsGlobal = new RateLimiter(500, 60 * 60 * 1000);
+const reportsByIp = new RateLimiter("csp-ip", 30, 10 * 60 * 1000);
+const reportsGlobal = new RateLimiter("csp-global", 500, 60 * 60 * 1000);
 
 /** เก็บแค่ origin + path ของ URL (ไม่เก็บ query/fragment) */
 function stripUrl(value: unknown): string | null {
@@ -82,7 +82,7 @@ export const cspRoutes = new Elysia().post(
 
     const ip = getClientIp(request.headers);
     const ipKey = ip ?? "unknown";
-    if (reportsByIp.retryAfter(ipKey) > 0 || reportsGlobal.retryAfter("all") > 0) return;
+    if ((await reportsByIp.retryAfter(ipKey)) > 0 || (await reportsGlobal.retryAfter("all")) > 0) return;
 
     let payload: unknown;
     try {
@@ -95,9 +95,8 @@ export const cspRoutes = new Elysia().post(
 
     const reports = normalize(payload);
     for (const report of reports) {
-      if (reportsByIp.retryAfter(ipKey) > 0 || reportsGlobal.retryAfter("all") > 0) break;
-      reportsByIp.hit(ipKey);
-      reportsGlobal.hit("all");
+      if ((await reportsByIp.retryAfter(ipKey)) > 0 || (await reportsGlobal.retryAfter("all")) > 0) break;
+      await Promise.all([reportsByIp.hit(ipKey), reportsGlobal.hit("all")]);
       void writeSecurityLog({
         eventType: "csp.violation",
         severity: report.disposition === "enforce" ? "warning" : "info",
