@@ -14,6 +14,7 @@ import { dashboardRoutes } from "./dashboard";
 import { adminRoutes } from "./admin";
 import { publicRoutes } from "./public";
 import { searchRoutes } from "./search";
+import { cspRoutes } from "./csp";
 
 export const routers = new Elysia()
   .use(authRoutes)
@@ -32,4 +33,5 @@ export const routers = new Elysia()
   .use(dashboardRoutes)
   .use(adminRoutes)
   .use(publicRoutes) // หน้าจอ TV display (ไม่ต้อง login)
-  .use(searchRoutes); // ค้นหาเชิงความหมายในเอกสาร (vector + keyword)
+  .use(searchRoutes) // ค้นหาเชิงความหมายในเอกสาร (vector + keyword)
+  .use(cspRoutes); // รับรายงาน CSP violation จากเบราว์เซอร์ (ไม่ต้อง login)

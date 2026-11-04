@@ -135,6 +135,7 @@ bun run dev        # http://localhost:3000
 PASETO_KEY=k4.local....          # session key (สร้างใหม่ทุกครั้งด้วย bun run gen:key — ห้ามใช้คีย์ตัวอย่าง)
 TRUST_PROXY=cloudflare           # แหล่ง IP ผู้ใช้ใน security log: cloudflare | xff | none
 SESSION_TTL_HOURS=8              # อายุ session (token + cookie)
+CSP_MODE=report-only             # CSP ของหน้าเว็บ: report-only | enforce | off (รายงานดูที่ /admin/logs)
 DB_HOST=127.0.0.1                # PostgreSQL
 DB_PORT=5432
 DB_USER=postgres
