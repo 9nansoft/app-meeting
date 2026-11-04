@@ -32,6 +32,7 @@ const EVENT_TYPES = [
   { value: "access.forbidden", label: "บทบาทไม่เพียงพอ (403)" },
   { value: "http.request", label: "การเรียกใช้ API (access log)" },
   { value: "user.register", label: "สมัครบัญชีใหม่" },
+  { value: "csp.violation", label: "CSP violation (เบราว์เซอร์รายงาน)" },
   { value: "log.exported", label: "ส่งออก log" },
   { value: "log.integrity_failed", label: "ตรวจพบ log ถูกแก้ไข" },
 ] as const;

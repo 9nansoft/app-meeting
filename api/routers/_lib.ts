@@ -37,6 +37,32 @@ export const requireRole =
 /** guard: ต้อง login เท่านั้น */
 export const requireAuth = () => requireRole();
 
+/**
+ * ตรวจสิทธิ์ admin ภายใน handler (ใช้กับ router ที่ผสม route ทั่วไปและ route ของ admin)
+ * คืน error object ถ้าไม่ผ่าน (ให้ handler return ทันที) หรือ null ถ้าผ่าน
+ */
+export function forbidUnlessAdmin(
+  user: AuthUser | null | undefined,
+  set: { status?: number | string },
+  request: Request,
+): { error: string } | null {
+  if (user?.role === "admin") return null;
+  void writeSecurityLog({
+    eventType: "access.forbidden",
+    severity: "warning",
+    userId: user ? Number(user.id) : null,
+    username: user?.username ?? null,
+    ip: getClientIp(request.headers),
+    userAgent: request.headers.get("user-agent"),
+    method: request.method,
+    path: new URL(request.url).pathname,
+    statusCode: 403,
+    detail: { requiredRoles: ["admin"], actualRole: user?.role ?? null },
+  });
+  set.status = 403;
+  return { error: "สำหรับผู้ดูแลระบบเท่านั้น" };
+}
+
 /** อ่าน JSON column ที่ knex (pg) คืนมาเป็น string */
 export function parseJson<T>(value: unknown, fallback: T): T {
   if (value === null || value === undefined) return fallback;

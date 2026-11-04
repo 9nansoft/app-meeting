@@ -2,6 +2,7 @@ import { Elysia, t } from "elysia";
 import { db, ensureSchema } from "../db";
 import { requireRole } from "./_lib";
 import { writeAudit } from "../services/audit";
+import { authorizeMeeting, viewableMeetingIdsQuery } from "../services/access";
 
 /**
  * Follow-up — ติดตามงานที่มอบหมายข้ามการประชุม
@@ -12,7 +13,7 @@ export const followupRoutes = new Elysia({ prefix: "/followup" })
   // รายการงานทั้งหมด (กรองตามสถานะ/ผู้รับผิดชอบ/ช่วงกำหนดส่ง)
   .get(
     "/actions",
-    async ({ query }) => {
+    async ({ query, user }) => {
       await ensureSchema();
       const q = db("meeting_action_items")
         .join("meetings", "meetings.id", "=", "meeting_action_items.meeting_id")
@@ -38,8 +39,19 @@ export const followupRoutes = new Elysia({ prefix: "/followup" })
 
       if (query.status) q.whereIn("meeting_action_items.status", query.status.split(","));
       else q.whereNotIn("meeting_action_items.status", ["cancelled", "done"]);
+      // ผู้ใช้ทั่วไปเห็นงานของการประชุมที่ตนเกี่ยวข้อง หรืองานที่ตนเป็นผู้รับผิดชอบ
+      const viewable = viewableMeetingIdsQuery(user!);
+      if (viewable) {
+        q.where((qb) => {
+          qb.whereIn("meeting_action_items.meeting_id", viewable).orWhere(
+            "meeting_action_items.assignee_id",
+            Number(user!.id),
+          );
+        });
+      }
       if (query.mine === "true" || query.mine === "1") {
-        q.where("meeting_action_items.assignee_id", Number(query.userId || 0));
+        // ใช้ตัวตนจาก session เสมอ (ไม่เชื่อ userId จาก client)
+        q.where("meeting_action_items.assignee_id", Number(user!.id));
       } else if (query.assigneeId) {
         q.where("meeting_action_items.assignee_id", query.assigneeId);
       }
@@ -53,7 +65,6 @@ export const followupRoutes = new Elysia({ prefix: "/followup" })
         status: t.Optional(t.String()),
         mine: t.Optional(t.String()),
         assigneeId: t.Optional(t.Number()),
-        userId: t.Optional(t.Number()),
         dueBefore: t.Optional(t.String()),
       }),
     },
@@ -64,10 +75,10 @@ export const followupRoutes = new Elysia({ prefix: "/followup" })
     "/carry-forward",
     async ({ body, user, set }) => {
       await ensureSchema();
-      const meeting = await db("meetings").where({ id: body.targetMeetingId }).first();
-      if (!meeting) {
-        set.status = 404;
-        return { error: "ไม่พบการประชุมปลายทาง" };
+      const target = await authorizeMeeting(user, body.targetMeetingId, "manage");
+      if (!target.ok) {
+        set.status = target.status;
+        return { error: target.status === 404 ? "ไม่พบการประชุมปลายทาง" : target.error };
       }
       const [maxRow] = await db("meeting_agendas")
         .where({ meeting_id: body.targetMeetingId })
@@ -77,6 +88,8 @@ export const followupRoutes = new Elysia({ prefix: "/followup" })
       for (const actionId of body.actionItemIds) {
         const item = await db("meeting_action_items").where({ id: actionId }).first();
         if (!item) continue;
+        // งานต้นทางต้องมาจากการประชุมที่ผู้ใช้มีสิทธิ์ดู
+        if (!(await authorizeMeeting(user, item.meeting_id, "view")).ok) continue;
         const [agenda] = await db("meeting_agendas")
           .insert({
             meeting_id: body.targetMeetingId,

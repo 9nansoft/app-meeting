@@ -1,6 +1,7 @@
 import { Elysia } from "elysia";
 import { db, ensureSchema } from "../db";
 import { requireRole } from "./_lib";
+import { isPrivileged, viewableMeetingIdsQuery } from "../services/access";
 
 /** Dashboard — การประชุมวันนี้ ห้องว่าง งานที่ต้องติดตาม รายงานรออนุมัติ */
 export const dashboardRoutes = new Elysia({ prefix: "/dashboard" })
@@ -17,6 +18,7 @@ export const dashboardRoutes = new Elysia({ prefix: "/dashboard" })
     weekEnd.setDate(weekEnd.getDate() + 7);
 
     const userId = Number(user!.id);
+    const viewable = viewableMeetingIdsQuery(user!);
 
     // การประชุมวันนี้ + ที่ฉันเข้าร่วม
     const todayMeetings = await db("meetings")
@@ -25,6 +27,9 @@ export const dashboardRoutes = new Elysia({ prefix: "/dashboard" })
       .where("meetings.start_time", ">=", todayStart)
       .where("meetings.start_time", "<", todayEnd)
       .whereNot("meetings.status", "cancelled")
+      .modify((qb) => {
+        if (viewable) qb.whereIn("meetings.id", viewable);
+      })
       .orderBy("meetings.start_time");
 
     const myMeetingIds = (
@@ -66,10 +71,16 @@ export const dashboardRoutes = new Elysia({ prefix: "/dashboard" })
       .join("meetings", "meetings.id", "=", "meeting_minutes.meeting_id")
       .select("meeting_minutes.*", "meetings.title as meeting_title")
       .where("meeting_minutes.status", "pending_review")
+      .modify((qb) => {
+        if (viewable) qb.whereIn("meetings.id", viewable);
+      })
       .orderBy("meeting_minutes.updated_at", "desc");
 
     // งาน AI ที่กำลังทำ/ล่าสุด
     const recentJobs = await db("ai_jobs")
+      .modify((qb) => {
+        if (!isPrivileged(user)) qb.where({ created_by: userId });
+      })
       .orderBy("created_at", "desc")
       .limit(8)
       .select("id", "job_type", "status", "meeting_id", "created_at", "completed_at", "error");

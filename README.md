@@ -120,7 +120,10 @@ bun install
 bun run dev        # http://localhost:3000
 ```
 
-บัญชีเริ่มต้น (seed อัตโนมัติครั้งแรก): `admin/password` (ผู้ดูแลระบบ), `secretary/password` (เลขานุการ), `demo/password` (สมาชิก), `staff/password` (เจ้าหน้าที่ห้องประชุม — ผู้รับผิดชอบห้องบอร์ดรูมและห้องประชุมเล็ก 1 ในข้อมูลตัวอย่าง)
+บัญชีเริ่มต้น (seed อัตโนมัติครั้งแรกเมื่อยังไม่มีผู้ใช้):
+- `admin` — รหัสผ่านจาก `SEED_ADMIN_PASSWORD` ถ้าไม่ตั้ง ระบบจะสุ่มรหัสและพิมพ์ใน log ของเซิร์ฟเวอร์ **ครั้งเดียว** (บรรทัด `[Seed]`)
+- บัญชีตัวอย่าง `secretary` / `demo` / `staff` สร้างเฉพาะเมื่อตั้ง `SEED_DEMO_USERS=true` (ใช้รหัสจาก `SEED_DEMO_PASSWORD` หรือรหัสสุ่ม) สำหรับ dev/demo เท่านั้น
+- ปิดการสมัครบัญชีเองเป็นค่าเริ่มต้น: ผู้ดูแลระบบสร้างบัญชีที่ `/admin` (เปิดได้ด้วย `ALLOW_SELF_REGISTER=true`)
 
 ระบบจะสร้างตารางทั้งหมด (30 ตาราง / 6 กลุ่ม) และ seed ข้อมูลตั้งต้นให้อัตโนมัติเมื่อเริ่มรัน
 
@@ -129,7 +132,12 @@ bun run dev        # http://localhost:3000
 ดูทั้งหมดได้ที่ `.env.example` — จุดสำคัญ:
 
 ```bash
-PASETO_KEY=k4.local....          # session key (สร้างด้วย bun run gen:key)
+PASETO_KEY=k4.local....          # session key (สร้างใหม่ทุกครั้งด้วย bun run gen:key — ห้ามใช้คีย์ตัวอย่าง)
+TRUST_PROXY=cloudflare           # แหล่ง IP ผู้ใช้ใน security log: cloudflare | xff | none
+SESSION_TTL_HOURS=8              # อายุ session (token + cookie)
+CSP_MODE=report-only             # CSP ของหน้าเว็บ: report-only | enforce | off (รายงานดูที่ /admin/logs)
+VALKEY_PASSWORD=...              # บังคับเมื่อใช้ docker-compose (service valkey เก็บตัวนับ rate limit) — openssl rand -hex 32
+REDIS_URL=redis://redis:6379     # (ไม่บังคับ เมื่อรันนอก compose) rate limit ร่วมกันหลาย instance — ไม่ตั้งจะนับในหน่วยความจำ
 DB_HOST=127.0.0.1                # PostgreSQL
 DB_PORT=5432
 DB_USER=postgres

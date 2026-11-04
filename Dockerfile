@@ -22,7 +22,12 @@ RUN apt-get update \
   && rm -rf /var/lib/apt/lists/*
 
 # Copy only the Nitro output (self-contained server)
-COPY --from=builder /app/.output ./.output
+COPY --from=builder --chown=bun:bun /app/.output ./.output
+
+# รันด้วยผู้ใช้ที่ไม่ใช่ root (ผู้ใช้ bun มากับ image oven/bun)
+RUN mkdir -p /app/storage && chown -R bun:bun /app/storage
+ENV STORAGE_DIR=/app/storage
+USER bun
 
 EXPOSE 3080
 CMD ["bun", ".output/server/index.mjs"]

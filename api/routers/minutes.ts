@@ -4,6 +4,7 @@ import { requireRole } from "./_lib";
 import { writeAudit } from "../services/audit";
 import { notify, notifyMeetingParticipants } from "../services/notifications";
 import { enqueueJob } from "../services/jobs";
+import { authorizeMeeting, canManageMeetingRow } from "../services/access";
 
 export const minutesRoutes = new Elysia({ prefix: "/meetings" })
   .use(requireRole())
@@ -12,8 +13,13 @@ export const minutesRoutes = new Elysia({ prefix: "/meetings" })
   // ดูรายงานฉบับล่าสุดของการประชุม (พร้อมมติ งาน การเข้าร่วม สถานะอนุมัติ)
   .get(
     "/:id/minutes",
-    async ({ params, set }) => {
+    async ({ params, set, user }) => {
       await ensureSchema();
+      const access = await authorizeMeeting(user, params.id, "view");
+      if (!access.ok) {
+        set.status = access.status;
+        return { error: access.error };
+      }
       const minutes = await db("meeting_minutes")
         .where({ meeting_id: params.id })
         .orderBy("version", "desc")
@@ -52,6 +58,11 @@ export const minutesRoutes = new Elysia({ prefix: "/meetings" })
     "/:id/minutes/generate",
     async ({ params, user, set }) => {
       await ensureSchema();
+      const access = await authorizeMeeting(user, params.id, "manage");
+      if (!access.ok) {
+        set.status = access.status;
+        return { error: access.error };
+      }
       const meeting = await db("meetings").where({ id: params.id }).first();
       if (!meeting) {
         set.status = 404;
@@ -88,6 +99,11 @@ export const minutesRoutes = new Elysia({ prefix: "/meetings" })
     "/:id/minutes",
     async ({ params, body, user, set }) => {
       await ensureSchema();
+      const access = await authorizeMeeting(user, params.id, "manage");
+      if (!access.ok) {
+        set.status = access.status;
+        return { error: access.error };
+      }
       const minutes = await db("meeting_minutes")
         .where({ meeting_id: params.id })
         .orderBy("version", "desc")
@@ -129,6 +145,11 @@ export const minutesRoutes = new Elysia({ prefix: "/meetings" })
     "/:id/minutes/request-approval",
     async ({ params, user, set }) => {
       await ensureSchema();
+      const access = await authorizeMeeting(user, params.id, "manage");
+      if (!access.ok) {
+        set.status = access.status;
+        return { error: access.error };
+      }
       const minutes = await db("meeting_minutes")
         .where({ meeting_id: params.id })
         .orderBy("version", "desc")
@@ -269,6 +290,11 @@ export const minutesRoutes = new Elysia({ prefix: "/meetings" })
     "/:id/decisions",
     async ({ params, body, user, set }) => {
       await ensureSchema();
+      const access = await authorizeMeeting(user, params.id, "manage");
+      if (!access.ok) {
+        set.status = access.status;
+        return { error: access.error };
+      }
       const [maxRow] = await db("meeting_decisions")
         .where({ meeting_id: params.id })
         .max("sequence_no as max");
@@ -313,6 +339,11 @@ export const minutesRoutes = new Elysia({ prefix: "/meetings" })
     "/:id/decisions/:decisionId/review",
     async ({ params, body, user, set }) => {
       await ensureSchema();
+      const access = await authorizeMeeting(user, params.id, "manage");
+      if (!access.ok) {
+        set.status = access.status;
+        return { error: access.error };
+      }
       const decision = await db("meeting_decisions")
         .where({ id: params.decisionId, meeting_id: params.id })
         .first();
@@ -349,6 +380,11 @@ export const minutesRoutes = new Elysia({ prefix: "/meetings" })
     "/:id/decisions/:decisionId",
     async ({ params, user, set }) => {
       await ensureSchema();
+      const access = await authorizeMeeting(user, params.id, "manage");
+      if (!access.ok) {
+        set.status = access.status;
+        return { error: access.error };
+      }
       const decision = await db("meeting_decisions")
         .where({ id: params.decisionId, meeting_id: params.id })
         .first();
@@ -376,6 +412,11 @@ export const minutesRoutes = new Elysia({ prefix: "/meetings" })
     "/:id/actions",
     async ({ params, body, user, set }) => {
       await ensureSchema();
+      const access = await authorizeMeeting(user, params.id, "manage");
+      if (!access.ok) {
+        set.status = access.status;
+        return { error: access.error };
+      }
       const [item] = await db("meeting_action_items")
         .insert({
           meeting_id: params.id,
@@ -435,10 +476,24 @@ export const minutesRoutes = new Elysia({ prefix: "/meetings" })
       await ensureSchema();
       const item = await db("meeting_action_items")
         .where({ id: params.actionId, meeting_id: params.id })
-        .first();
-      if (!item) {
+        .first()
+        .catch(() => null);
+      const isAssignee = !!item && item.assignee_id === Number(user!.id);
+      const access = await authorizeMeeting(user, params.id, "view");
+      // ผู้รับผิดชอบงานอาจไม่ได้เป็นผู้เข้าร่วมการประชุม แต่ต้องอัปเดตงานของตัวเองได้
+      if (!item || (!access.ok && !isAssignee)) {
         set.status = 404;
         return { error: "ไม่พบงาน" };
+      }
+      // ผู้จัด/เลขา/admin แก้ได้ทุกช่อง — ผู้รับผิดชอบงานอัปเดตได้เฉพาะสถานะและความคืบหน้าของงานตัวเอง
+      if (!access.ok || !canManageMeetingRow(user, access.meeting)) {
+        const touchesOtherFields = (
+          ["title", "detail", "assigneeId", "assigneeText", "dueDate", "priority"] as const
+        ).some((k) => body[k] !== undefined);
+        if (!isAssignee || touchesOtherFields) {
+          set.status = 403;
+          return { error: "ผู้รับผิดชอบงานอัปเดตได้เฉพาะสถานะและความคืบหน้า" };
+        }
       }
       await db("meeting_action_items")
         .where({ id: params.actionId })
@@ -484,6 +539,11 @@ export const minutesRoutes = new Elysia({ prefix: "/meetings" })
     "/:id/actions/:actionId",
     async ({ params, user, set }) => {
       await ensureSchema();
+      const access = await authorizeMeeting(user, params.id, "manage");
+      if (!access.ok) {
+        set.status = access.status;
+        return { error: access.error };
+      }
       const item = await db("meeting_action_items")
         .where({ id: params.actionId, meeting_id: params.id })
         .first();
@@ -509,6 +569,11 @@ export const minutesRoutes = new Elysia({ prefix: "/meetings" })
     "/:id/attendance",
     async ({ params, body, user, set }) => {
       await ensureSchema();
+      const access = await authorizeMeeting(user, params.id, "manage");
+      if (!access.ok) {
+        set.status = access.status;
+        return { error: access.error };
+      }
       for (const row of body.records) {
         const existing = await db("meeting_attendance")
           .where({ meeting_id: params.id, user_id: row.userId })

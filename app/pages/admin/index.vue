@@ -108,7 +108,16 @@ async function submitCreate() {
   creating.value = false;
   if (d) {
     createOpen.value = false;
-    toast.success(`สร้างบัญชี "${createForm.value.username.trim()}" แล้ว`);
+    const generated = (d as any).generatedPassword as string | null | undefined;
+    if (generated) {
+      // แสดงรหัสที่สุ่มให้ครั้งเดียว — ให้ admin ส่งต่อผู้ใช้และให้เปลี่ยนเองภายหลัง
+      toast.success(`สร้างบัญชี "${createForm.value.username.trim()}" แล้ว`, {
+        description: `รหัสผ่านเริ่มต้น: ${generated} (แสดงครั้งเดียว กรุณาจดไว้)`,
+        duration: 60_000,
+      });
+    } else {
+      toast.success(`สร้างบัญชี "${createForm.value.username.trim()}" แล้ว`);
+    }
     await load();
   }
 }
@@ -162,8 +171,8 @@ function openReset(u: any) {
 
 async function submitReset() {
   if (!resetUser.value) return;
-  if (newPassword.value.trim().length < 6) {
-    toast.error("รหัสผ่านต้องมีความยาวอย่างน้อย 6 ตัวอักษร");
+  if (newPassword.value.trim().length < 8) {
+    toast.error("รหัสผ่านต้องมีความยาวอย่างน้อย 8 ตัวอักษร");
     return;
   }
   const d = await call(() =>
@@ -329,7 +338,7 @@ const canDelete = (u: any) => u.username !== "admin" && u.id !== authUser.value?
           </div>
           <div class="space-y-1.5">
             <Label class="text-xs">รหัสผ่านเริ่มต้น</Label>
-            <Input v-model="createForm.password" type="text" placeholder="เว้นว่าง = password" />
+            <Input v-model="createForm.password" type="text" placeholder="เว้นว่าง = ระบบสุ่มรหัสให้" />
             <p class="text-[11px] text-muted-foreground">แนะนำให้ผู้ใช้เปลี่ยนรหัสผ่านภายหลัง</p>
           </div>
         </div>
@@ -388,7 +397,7 @@ const canDelete = (u: any) => u.username !== "admin" && u.id !== authUser.value?
         <div class="space-y-3">
           <div class="space-y-1.5">
             <Label class="text-xs">รหัสผ่านใหม่</Label>
-            <Input v-model="newPassword" type="text" placeholder="อย่างน้อย 6 ตัวอักษร" />
+            <Input v-model="newPassword" type="text" placeholder="อย่างน้อย 8 ตัวอักษร" />
           </div>
           <p class="text-xs text-muted-foreground">
             รหัสผ่านเดิมจะถูกแทนที่ทันที ผู้ใช้ที่ login อยู่จะยังใช้ session เดิมได้จนถึง 7 วัน

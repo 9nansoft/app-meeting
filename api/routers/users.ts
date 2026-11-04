@@ -1,7 +1,16 @@
 import { Elysia, t } from "elysia";
 import { requireRole } from "./_lib";
 import { writeAudit } from "../services/audit";
-import { db, ensureSchema, hashPassword, type DbUser } from "../db";
+import {
+  db,
+  ensureSchema,
+  hashPassword,
+  validatePasswordPolicy,
+  generateStrongPassword,
+  PASSWORD_MAX_LENGTH,
+  type DbUser,
+} from "../db";
+import { invalidateSessionUser } from "../middleware/auth";
 
 /** บทบาทที่แอดมินกำหนดให้ผู้ใช้ได้ */
 const ASSIGNABLE_ROLES: readonly string[] = ["admin", "secretary", "member", "staff"];
@@ -52,7 +61,17 @@ export const usersAdminRoutes = new Elysia({ prefix: "/users" })
         set.status = 400;
         return { error: "มี username นี้ในระบบแล้ว" };
       }
-      const password = body.password?.trim() || "password";
+      // ไม่ระบุรหัส → สุ่มรหัสที่แข็งแรงแล้วคืนให้ admin ครั้งเดียว (ไม่ใช้รหัสตั้งต้นที่เดาได้)
+      const providedPassword = body.password?.trim() || "";
+      const generatedPassword = providedPassword ? null : generateStrongPassword();
+      const password = providedPassword || generatedPassword!;
+      if (providedPassword) {
+        const policyError = validatePasswordPolicy(providedPassword, username);
+        if (policyError) {
+          set.status = 400;
+          return { error: policyError };
+        }
+      }
       const [created] = await db<DbUser>("users")
         .insert({
           username,
@@ -72,15 +91,15 @@ export const usersAdminRoutes = new Elysia({ prefix: "/users" })
         entityId: String(newUser.id),
         newValue: toPublicUser(newUser),
       });
-      return { success: true, user: toPublicUser(newUser) };
+      return { success: true, user: toPublicUser(newUser), generatedPassword };
     },
     {
       body: t.Object({
-        username: t.String(),
+        username: t.String({ maxLength: 100 }),
         role: t.String(),
         name: t.Optional(t.String()),
         position: t.Optional(t.String()),
-        password: t.Optional(t.String()),
+        password: t.Optional(t.String({ maxLength: PASSWORD_MAX_LENGTH })),
       }),
     },
   )
@@ -119,6 +138,7 @@ export const usersAdminRoutes = new Elysia({ prefix: "/users" })
         .returning([...USER_COLUMNS]);
       const updatedUser = updated || (await db<DbUser>("users").where({ id: target.id }).first());
       if (!updatedUser) throw new Error("user update failed");
+      invalidateSessionUser(target.id);
       await writeAudit({
         userId: Number(user!.id),
         username: user!.username,
@@ -151,13 +171,15 @@ export const usersAdminRoutes = new Elysia({ prefix: "/users" })
         return { error: "ไม่พบผู้ใช้" };
       }
       const newPassword = (body.password || "").trim();
-      if (newPassword.length < 6) {
+      const policyError = validatePasswordPolicy(newPassword, target.username);
+      if (policyError) {
         set.status = 400;
-        return { error: "รหัสผ่านต้องมีความยาวอย่างน้อย 6 ตัวอักษร" };
+        return { error: policyError };
       }
       await db<DbUser>("users")
         .where({ id: target.id })
         .update({ password: hashPassword(newPassword), updated_at: db.fn.now() });
+      invalidateSessionUser(target.id);
       await writeAudit({
         userId: Number(user!.id),
         username: user!.username,
@@ -169,7 +191,7 @@ export const usersAdminRoutes = new Elysia({ prefix: "/users" })
     },
     {
       params: t.Object({ id: t.String() }),
-      body: t.Object({ password: t.String() }),
+      body: t.Object({ password: t.String({ maxLength: PASSWORD_MAX_LENGTH }) }),
     },
   )
   // ลบบัญชีผู้ใช้
@@ -191,6 +213,7 @@ export const usersAdminRoutes = new Elysia({ prefix: "/users" })
         return { error: "ไม่สามารถลบบัญชีของตัวเองได้" };
       }
       await db<DbUser>("users").where({ id: target.id }).del();
+      invalidateSessionUser(target.id);
       await writeAudit({
         userId: Number(user!.id),
         username: user!.username,

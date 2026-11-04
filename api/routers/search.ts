@@ -1,6 +1,7 @@
 import { Elysia, t } from "elysia";
 import { db, ensureSchema } from "../db";
 import { requireRole } from "./_lib";
+import { authorizeMeeting, viewableMeetingIdsQuery } from "../services/access";
 import { isAiConfigured, embedTexts, cosineSimilarity, AI_EMBED_MODEL } from "../services/ai/provider";
 
 /**
@@ -13,10 +14,14 @@ export const searchRoutes = new Elysia({ prefix: "/search" })
   .use(requireRole())
   .post(
     "/",
-    async ({ body }) => {
+    async ({ body, user, set }) => {
       await ensureSchema();
       const q = body.query.trim();
       if (!q) return { mode: "keyword", results: [] };
+      if (body.meetingId && !(await authorizeMeeting(user, body.meetingId, "view")).ok) {
+        set.status = 404;
+        return { error: "ไม่พบการประชุม" };
+      }
 
       const chunkQuery = db("document_chunks")
         .join("meeting_documents", "meeting_documents.id", "=", "document_chunks.document_id")
@@ -36,6 +41,9 @@ export const searchRoutes = new Elysia({ prefix: "/search" })
         )
         .limit(body.meetingId ? 2000 : 5000);
       if (body.meetingId) chunkQuery.where("meeting_documents.meeting_id", body.meetingId);
+      // ค้นได้เฉพาะเอกสารของการประชุมที่ผู้ใช้มีสิทธิ์ดู
+      const viewable = viewableMeetingIdsQuery(user!);
+      if (viewable) chunkQuery.whereIn("meeting_documents.meeting_id", viewable);
       const chunks = await chunkQuery;
 
       const topK = Math.min(body.topK ?? 10, 30);
@@ -120,9 +128,9 @@ export const searchRoutes = new Elysia({ prefix: "/search" })
     },
     {
       body: t.Object({
-        query: t.String({ minLength: 1 }),
+        query: t.String({ minLength: 1, maxLength: 500 }),
         meetingId: t.Optional(t.String()),
-        topK: t.Optional(t.Number()),
+        topK: t.Optional(t.Number({ minimum: 1, maximum: 30 })),
       }),
     },
   );

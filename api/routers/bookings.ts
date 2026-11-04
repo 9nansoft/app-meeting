@@ -3,6 +3,7 @@ import crypto from "node:crypto";
 import { db, ensureSchema } from "../db";
 import { requireRole } from "./_lib";
 import { writeAudit } from "../services/audit";
+import { authorizeMeeting } from "../services/access";
 
 /** ตรวจว่ามีการจองทับเวลากับห้องนี้อีกหรือไม่ (สถานะ != cancelled) */
 export async function findOverlaps(
@@ -95,6 +96,17 @@ export const bookingsRoutes = new Elysia({ prefix: "/bookings" })
       if (!room) {
         set.status = 404;
         return { error: "ไม่พบห้องประชุม" };
+      }
+      if (body.meetingId) {
+        const access = await authorizeMeeting(user, body.meetingId, "manage");
+        if (!access.ok) {
+          set.status = access.status;
+          return { error: access.error };
+        }
+      }
+      if (new Date(body.start) >= new Date(body.end)) {
+        set.status = 400;
+        return { error: "เวลาเริ่มต้นต้องก่อนเวลาสิ้นสุด" };
       }
 
       const slots: Array<{ start: Date; end: Date }> = [{ start: new Date(body.start), end: new Date(body.end) }];

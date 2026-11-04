@@ -1,6 +1,6 @@
 import { Elysia, t } from "elysia";
 import { db, ensureSchema } from "../db";
-import { readStorageFile } from "../services/storage";
+import { readStorageFile, fileResponse } from "../services/storage";
 
 /**
  * Public API สำหรับหน้าจอแสดงผลหน้าห้องประชุม (TV Display)
@@ -27,18 +27,14 @@ export const publicRoutes = new Elysia({ prefix: "/public" })
   // รูปห้อง (เปิดเผยได้ — ใช้บนจอ TV)
   .get("/room-images/:imageId/raw", async ({ params, set }) => {
     await ensureSchema();
-    const image = await db("room_images").where({ id: params.imageId }).first();
+    const image = await db("room_images").where({ id: params.imageId }).first().catch(() => null);
     if (!image) {
       set.status = 404;
       return { error: "ไม่พบรูป" };
     }
     const buffer = await readStorageFile(image.storage_key);
-    return new Response(new Uint8Array(buffer), {
-      headers: {
-        "Content-Type": image.mime_type,
-        "Cache-Control": "public, max-age=3600",
-      },
-    });
+    // ให้บริการเฉพาะรูปที่ตรวจชนิดแล้ว — ไฟล์เก่าที่ไม่ใช่รูปจะถูกส่งเป็น attachment แทน
+    return fileResponse(buffer, image.mime_type, { cacheControl: "public, max-age=3600" });
   })
 
   /**
@@ -65,7 +61,6 @@ export const publicRoutes = new Elysia({ prefix: "/public" })
         .select(
           "room_bookings.id",
           "room_bookings.title",
-          "room_bookings.purpose",
           "room_bookings.start_time",
           "room_bookings.end_time",
           "room_bookings.room_id",

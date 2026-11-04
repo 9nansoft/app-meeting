@@ -37,7 +37,8 @@ export type SecurityEventType =
   | "http.request" // access log ทุก request
   | "user.register"
   | "log.exported" // ผู้ดูแลส่งออก log
-  | "log.integrity_failed"; // ตรวจพบว่า hash chain ขาด/ถูกแก้
+  | "log.integrity_failed" // ตรวจพบว่า hash chain ขาด/ถูกแก้
+  | "csp.violation"; // เบราว์เซอร์รายงานการละเมิด Content-Security-Policy
 
 export interface SecurityLogEntry {
   eventType: SecurityEventType;
@@ -279,16 +280,39 @@ export function startLogMaintenance(): void {
   console.log("[SecurityLog] maintenance started (verify hourly, purge daily, retention ≥ 90 days)");
 }
 
-/** ดึง IP ผู้เรียกจริง — รองรับการอยู่หลัง reverse proxy (Nginx/Docker) */
+/**
+ * ดึง IP ผู้เรียกจริงตามนโยบาย proxy ที่เชื่อถือ (ตัวแปร TRUST_PROXY)
+ *
+ *   cloudflare (ค่าเริ่มต้น) — ใช้ CF-Connecting-IP ที่ Cloudflare เขียนทับให้เสมอ
+ *                               (ต้องให้แอปรับ traffic ผ่าน Cloudflare Tunnel เท่านั้น —
+ *                               docker-compose bind พอร์ตไว้ที่ 127.0.0.1)
+ *   xff                      — อยู่หลัง reverse proxy ของเราเอง (Nginx ฯลฯ): ใช้ค่าขวาสุดของ
+ *                               X-Forwarded-For (ค่าที่ proxy ตัวที่ใกล้ที่สุดต่อท้าย ปลอมไม่ได้)
+ *                               หรือ X-Real-IP
+ *   none                     — ไม่เชื่อ header ใดเลย
+ *
+ * ไม่ใช้ค่าซ้ายสุดของ X-Forwarded-For อีกต่อไป เพราะ client ใส่เองได้ ทำให้ IP ใน log
+ * ตาม พ.ร.บ. คอมพิวเตอร์ ม.26 ถูกปลอม และหลบ rate limit ต่อ IP ได้
+ * (Nitro preset Bun ไม่ส่ง socket address มาถึง Elysia จึงต้องอาศัย proxy ที่เชื่อถือ)
+ */
 export function getClientIp(headers: Headers | Record<string, unknown> | undefined): string | null {
   if (!headers) return null;
   const read = (name: string): string => {
     if (typeof (headers as Headers).get === "function") return (headers as Headers).get(name) ?? "";
     return String((headers as Record<string, unknown>)[name] ?? "");
   };
-  const xff = read("x-forwarded-for");
-  if (xff) return xff.split(",")[0].trim();
-  return read("x-real-ip") || read("cf-connecting-ip") || null;
+  const clean = (v: string): string | null => {
+    const ip = v.trim();
+    return ip && ip.length <= 64 && /^[0-9a-fA-F:.]+$/.test(ip) ? ip : null;
+  };
+  const mode = (process.env.TRUST_PROXY || "cloudflare").toLowerCase();
+  if (mode === "none" || mode === "false") return null;
+  if (mode === "xff" || mode === "true") {
+    const xff = read("x-forwarded-for");
+    if (xff) return clean(xff.split(",").pop() ?? "");
+    return clean(read("x-real-ip"));
+  }
+  return clean(read("cf-connecting-ip"));
 }
 
 /** ตัดสินใจ severity จาก status code ของ access log */
