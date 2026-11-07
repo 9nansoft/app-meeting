@@ -50,6 +50,23 @@ updates:
       prefix: "chore(deps)"
       prefix-development: "chore(deps-dev)"
 
+  # ---------- GitHub Actions ใน .github/workflows (pin ด้วย commit SHA) ----------
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "Asia/Bangkok"
+    cooldown:
+      default-days: 7
+    groups:
+      actions:
+        patterns:
+          - "*"
+    commit-message:
+      prefix: "ci"
+
   # ---------- Base image ใน Dockerfile (oven/bun) ----------
   - package-ecosystem: "docker"
     directory: "/"
@@ -77,8 +94,8 @@ updates:
     cooldown:
       default-days: 3
     ignore:
-      # image ของแอปเอง (สร้างจาก GitLab CI) — ไม่ต้องให้ Dependabot ดูแล
-      - dependency-name: "registry.gitlab.com/phingosoft/es-nuxt"
+      # image ของแอปเอง (build โดย GitHub Actions) — ไม่ต้องให้ Dependabot ดูแล
+      - dependency-name: "ghcr.io/9nansoft/app-meeting"
       # อยู่สาย Valkey 8.1 (ยังได้ security patch) — ย้ายไป major ใหม่อย่างตั้งใจพร้อมทดสอบ ไม่ให้เสนออัตโนมัติ
       - dependency-name: "valkey/valkey"
         update-types: ["version-update:semver-major"]

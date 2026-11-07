@@ -1,6 +1,8 @@
 services:
   app:
-    image: "registry.gitlab.com/phingosoft/es-nuxt:latest"
+    # build และ push โดย GitHub Actions (.github/workflows/docker-publish.yml)
+    # APP_TAG เลือก tag ได้ เช่น sha-abc1234 เพื่อ rollback (ค่าเริ่มต้น latest)
+    image: ghcr.io/9nansoft/app-meeting:${APP_TAG:-latest}
     ports:
       # เปิดเฉพาะ localhost — ผู้ใช้ภายนอกเข้าผ่าน Cloudflare Tunnel เท่านั้น
       # (ถ้าเปิดสู่ภายนอกตรง ๆ จะปลอม CF-Connecting-IP ใน security log ได้)

@@ -236,32 +236,33 @@ bun x nuxt typecheck            # typecheck ทั้งโปรเจกต์
 
 ---
 
-## Gitlab CI/CD Prodction
+## CI/CD (GitHub Actions + GitHub Container Registry)
 
-```
-เปลี่ยนชื่อไฟล์ .gitlab-ci.yml.prd ---> .gitlab-ci.yml
-```
+| Workflow | เมื่อไร | ทำอะไร |
+|---|---|---|
+| `.github/workflows/docker-publish.yml` | PR เข้า `main` | typecheck API + build image (ไม่ push) |
+| | push `main` | build แล้ว push `ghcr.io/9nansoft/app-meeting:latest` และ `:sha-<commit>` |
+| | push tag `v*` | push `:<version>` เช่น `v1.2.3` → `1.2.3`, `1.2` |
+| `.github/workflows/deploy.yml` | สั่งเอง (Actions → Deploy production → Run workflow) | SSH เข้าเครื่อง production แล้ว `docker compose pull app && up -d` |
 
-### สร้างโฟล์เดอร์โปรเจกต์
+### ตั้งค่า deploy (ครั้งแรก)
+ใน GitHub: Settings → Secrets and variables → Actions
+- **Secrets:** `SSH_PRIVATE_KEY` (private key ของผู้ใช้ deploy), `SSH_KNOWN_HOSTS` (ผลของ `ssh-keyscan -H <host>`)
+- **Variables:** `SSH_HOST`, `SSH_USER`, `DEPLOY_PATH` (โฟลเดอร์บนเครื่องที่มี `docker-compose.yml` และ `.env`)
+- แนะนำ: Settings → Environments → `production` → Required reviewers (ต้องกดอนุมัติก่อน deploy)
+
+workflow deploy จะ login `ghcr.io` ให้เครื่อง production ด้วย token ชั่วคราวของ job แล้ว logout หลัง pull
+ถ้าจะ pull เองบนเครื่อง ให้ `docker login ghcr.io` ด้วย Personal Access Token ที่มีสิทธิ์ `read:packages`
+
+### เตรียมเครื่อง production
 ```
-mkdir -p ~/app-docker
+mkdir -p ~/app-docker/cloudflared
 cd ~/app-docker
-mkdir cloudflared
+# วาง docker-compose.yml จาก repo และสร้าง .env (ดู .env.example: PASETO_KEY, VALKEY_PASSWORD, TRUST_PROXY ฯลฯ)
 ```
 
-### config docker-compose.yml
-
-เปลี่ยนไปเป็น repo ของตัวเอง
-exp repo: phingosoft/es-nuxt
-
-```
-image: "registry.gitlab.com/phingosoft/es-nuxt:latest"
-```
-
-### config cloudflare tunnel
-```
-mkdir cloudflared
-```
+### Rollback
+deploy tag เก่าได้จากหน้า Run workflow (เช่น `sha-abc1234`) หรือบนเครื่อง: `APP_TAG=sha-abc1234 docker compose up -d`
 
 ---
 Built with [Nuxt](https://nuxt.com/), [Elysia](https://elysiajs.com/), and [Shadcn-Vue](https://www.shadcn-vue.com/)
