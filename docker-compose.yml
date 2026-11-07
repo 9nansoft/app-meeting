@@ -67,7 +67,7 @@ services:
     # pin เวอร์ชัน + digest (multi-arch: amd64/arm64) แทน :latest เพื่อให้ deploy ซ้ำได้ผลเหมือนเดิม
     # และไม่ดึง image ใหม่มาใช้โดยไม่ได้ตรวจ — อัปเดตโดยเปลี่ยนทั้ง tag และ digest พร้อมกัน
     # (ดูเวอร์ชัน: https://hub.docker.com/r/cloudflare/cloudflared/tags)
-    image: cloudflare/cloudflared:2026.10.3@sha256:faa8e0a1475f137c910be6025f43c8e4092fdd35461b31e19fd1390657a1ff39
+    image: cloudflare/cloudflared:2026.10.7@sha256:4955524aeaa379e154023d5a027c250f7b35041a2e7e950cf13f144bc9b9c5ba
     restart: unless-stopped
     depends_on:
       - app
