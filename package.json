@@ -46,7 +46,7 @@
   },
   "devDependencies": {
     "@iconify-json/radix-icons": "^1.2.6",
-    "@iconify/vue": "^5.0.4",
+    "@iconify/vue": "^5.0.5",
     "@nuxtjs/color-mode": "^4.0.1",
     "@nuxtjs/tailwindcss": "7.0.0-beta.1",
     "@types/node": "^26.6.6",
