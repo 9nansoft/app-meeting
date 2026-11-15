@@ -286,7 +286,7 @@ cd ~/app-docker
 ```
 
 ### หลาย instance (scale)
-docker-compose รันแอปหลัง service `proxy` (Caddy) ที่กระจาย request และ WebSocket ไปทุก replica แบบ least-connections
+docker-compose รันแอปหลัง service `proxy` (Caddy — ดูหัวข้อทางเข้าวงภายในด้านล่าง) ที่กระจาย request และ WebSocket ไปทุก replica แบบ least-connections
 และพักตัวที่ต่อไม่ได้ (กำลังรีสตาร์ต/deploy) ไว้ 10 วินาที — ตั้งจำนวนใน `.env`:
 
 ```
@@ -317,6 +317,24 @@ workflow deploy ส่ง [`scripts/rolling-deploy.sh`](scripts/rolling-deploy.s
 
 > deploy ครั้งแรกที่ย้ายจาก docker-compose.yml แบบเดิม (app bind พอร์ต host เอง) สคริปต์จะ up ทั้งชุดหนึ่งครั้ง (มี downtime สั้น ๆ ครั้งเดียว)
 > เพราะ proxy bind พอร์ตเดิมไม่ได้จนกว่า app เดิมจะถูกปิด — ครั้งต่อไปเป็น rolling ทั้งหมด
+
+### ทางเข้าวงภายใน (HTTPS ตรงถึงเครื่อง ไม่ออกอินเทอร์เน็ต)
+ผู้ใช้ในองค์กรเปิด `https://<APP_DOMAIN>` แล้ววิ่งตรงเข้า service `proxy` บนเครื่องนี้ ส่วนผู้ใช้ภายนอกยังเข้าผ่าน Cloudflare Tunnel ได้พร้อมกัน
+(ปิด Tunnel ได้ด้วย `TUNNEL_REPLICAS=0`) — ต้องเป็น HTTPS เพราะ cookie session ตั้ง `Secure` และเบราว์เซอร์ให้ใช้ไมค์เฉพาะหน้า HTTPS
+
+1. ใน `.env`: `APP_DOMAIN`, `CLOUDFLARE_API_TOKEN` (สิทธิ์ Zone / DNS / Edit เฉพาะ zone นั้น), `LAN_BIND=<IP วงภายในของเครื่อง>`
+2. DNS: ให้เครื่องในองค์กร resolve `APP_DOMAIN` เป็น IP วงภายในของเครื่องนี้ — เพิ่มระเบียนใน DNS ภายในขององค์กร (แนะนำ)
+   หรือสร้างระเบียน A บน Cloudflare แบบ **DNS only** (เมฆสีเทา) ชี้ IP วงภายใน
+   (router บางรุ่นกันการ resolve ชื่อสาธารณะเป็น IP ภายใน — ถ้าเจอให้ใช้ DNS ภายใน)
+   ถ้าใช้ชื่อเดียวกับที่เปิดผ่าน Tunnel ต้องเป็นแบบ split DNS (ภายในชี้ IP วงภายใน ภายนอกชี้ Tunnel)
+3. `docker compose up -d proxy` — Caddy ขอใบรับรอง Let's Encrypt ผ่าน Cloudflare DNS challenge เอง และต่ออายุอัตโนมัติ
+   (เครื่อง server ต้องออกเน็ตไป Let's Encrypt และ Cloudflare API ได้ ส่วนผู้ใช้ไม่ต้อง) ใบรับรองเก็บใน volume `caddy-data`
+
+แอปเห็น IP จริงของผู้ใช้ทั้งสองทางผ่าน `CF-Connecting-IP` (`TRUST_PROXY=cloudflare` เหมือนเดิม):
+ทาง Tunnel Cloudflare ใส่ให้, ทางวงภายใน Caddy เขียนทับด้วย IP ของเครื่องผู้ใช้ — ผู้ใช้ในวงภายในจึงปลอม IP ใน log ไม่ได้
+
+image ของ proxy build จาก [`deploy/proxy/Dockerfile`](deploy/proxy/Dockerfile) (Caddy + โมดูล [caddy-dns/cloudflare](https://github.com/caddy-dns/cloudflare))
+โดย workflow `docker-publish.yml` ได้ tag `caddy-<ver>-cf-<ver>` — ถ้าอัปเดตเวอร์ชันใน Dockerfile ให้แก้ `PROXY_TAG` ค่าเริ่มต้นใน docker-compose.yml ให้ตรงกัน
 
 ### ย้ายจากเวอร์ชันที่ยังไม่มี volume `app-storage` (ครั้งเดียว)
 เวอร์ชันก่อนหน้าเก็บไฟล์ที่อัปโหลดไว้ใน container (หายเมื่อ container ถูกสร้างใหม่) — คัดลอกออกมาก่อน deploy เวอร์ชันนี้:
