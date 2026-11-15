@@ -146,9 +146,10 @@ export const liveRoutes = new Elysia({ prefix: "/meetings" })
         .orderBy("sequence_no", "asc");
       if (query.after) q.where("created_at", ">", query.after);
       const segments = await q;
+      // ended_at/duration_seconds: หน้า live ใช้เอาข้อความถอดเสียงสดที่ transcript จริงครอบคลุมแล้วออก
       const recordings = await db("meeting_recordings")
         .where({ meeting_id: params.id })
-        .select("id", "status");
+        .select("id", "status", "ended_at", "duration_seconds");
       return {
         segments,
         recordings,

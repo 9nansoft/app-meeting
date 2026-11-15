@@ -24,10 +24,12 @@ useSeoMeta({ title: "Live Meeting | AI Smart Meeting" });
 
 const { api, call, upload } = useMeetingApi();
 const live = useLiveCaptions(meetingId);
+// ข้อความสด: ทุกคนที่เปิดหน้านี้เห็น (ผู้ชม) / เครื่องที่กดบันทึกส่งเสียง (ผู้บันทึก)
 const liveLines = live.lines;
 const livePartial = live.partial;
-const liveStatus = live.status;
-const liveError = live.errorMessage;
+const liveRecorders = live.activeRecorders;
+const liveStatus = live.recorderStatus;
+const liveError = live.recorderError;
 const liveEnd = ref<HTMLElement | null>(null);
 // เลื่อนลงไปที่ข้อความสดล่าสุด
 watch(
@@ -66,7 +68,7 @@ async function loadTranscript() {
     segments.value = (data as any).segments ?? [];
     recordings.value = (data as any).recordings ?? [];
     // ไฟล์เสียงช่วงไหนถอดเสร็จแล้ว → เอาข้อความสดของช่วงนั้นออก (แสดง transcript จริงแทน)
-    live.dropTranscribed(recordings.value);
+    live.setRecordings(recordings.value);
   }
 }
 
@@ -83,6 +85,8 @@ onMounted(async () => {
   if (u) users.value = Array.isArray(u) ? u : (u as any).users ?? [];
   await Promise.all([load(), loadTranscript(), loadResults()]);
   startPolling();
+  // รับข้อความถอดเสียงสดของการประชุมนี้ (ทุกคนที่เปิดหน้า ไม่ต้องเป็นผู้บันทึก)
+  void live.subscribe();
 });
 
 let pollTimer: ReturnType<typeof setInterval> | null = null;
@@ -93,6 +97,7 @@ function startPolling() {
 }
 onUnmounted(() => {
   stopRecording(false);
+  live.unsubscribe();
   if (pollTimer) clearInterval(pollTimer);
 });
 
@@ -104,8 +109,6 @@ let mediaRecorder: MediaRecorder | null = null;
 let mediaStream: MediaStream | null = null;
 let elapsedTimer: ReturnType<typeof setInterval> | null = null;
 let segStartTime = 0;
-/** ลำดับไฟล์เสียง 5 นาทีในการบันทึกครั้งนี้ — ใช้จับคู่ข้อความสดกับ recording ที่อัปโหลด */
-let segCounter = 0;
 const SEGMENT_MS = 5 * 60 * 1000; // อัปโหลดทุก 5 นาที เพื่อถอดเสียงแบบใกล้เรียลไทม์
 
 async function startRecording() {
@@ -117,7 +120,6 @@ async function startRecording() {
   }
   isRecording.value = true;
   elapsedSec.value = 0;
-  segCounter = 0;
   elapsedTimer = setInterval(() => (elapsedSec.value += 1), 1000);
 
   if (detail.value?.meeting?.status === "scheduled") {
@@ -126,7 +128,7 @@ async function startRecording() {
   }
   beginSegment();
   // ถอดเสียงสด (ถ้าตั้งค่า OpenThai ASR ไว้) — ล้มเหลวก็ไม่กระทบการบันทึกไฟล์
-  void live.start(mediaStream!);
+  void live.startRecorder(mediaStream!);
   toast.success("เริ่มบันทึกเสียงแล้ว — ระบบจะถอดเสียงเป็นช่วง ๆ ระหว่างประชุม");
 }
 
@@ -137,14 +139,13 @@ function beginSegment() {
     : "audio/webm";
   mediaRecorder = new MediaRecorder(mediaStream, { mimeType: mime });
   const chunks: Blob[] = [];
-  const segIndex = segCounter++;
   segStartTime = Date.now();
   mediaRecorder.ondataavailable = (e) => e.data.size > 0 && chunks.push(e.data);
   mediaRecorder.onstop = async () => {
     const blob = new Blob(chunks, { type: mime });
     if (blob.size > 1024) {
       const durationSec = Math.round((Date.now() - segStartTime) / 1000);
-      await uploadSegment(blob, durationSec, segIndex);
+      await uploadSegment(blob, durationSec);
     }
   };
   mediaRecorder.start();
@@ -157,7 +158,6 @@ let segmentTimer: ReturnType<typeof setTimeout> | null = null;
 function rotateSegment() {
   // หยุดชั่วคราวเพื่อปิดไฟล์ แล้วเริ่ม segment ใหม่ทันที
   if (mediaRecorder?.state === "recording") {
-    live.markSegment();
     mediaRecorder.stop();
     setTimeout(() => {
       if (isRecording.value) beginSegment();
@@ -165,7 +165,7 @@ function rotateSegment() {
   }
 }
 
-async function uploadSegment(blob: Blob, durationSec: number, segIndex: number) {
+async function uploadSegment(blob: Blob, durationSec: number) {
   uploadingCount.value += 1;
   const headers: Record<string, string> = {
     "x-duration-seconds": String(durationSec),
@@ -179,7 +179,6 @@ async function uploadSegment(blob: Blob, durationSec: number, segIndex: number) 
   );
   uploadingCount.value -= 1;
   if (result) {
-    if (result.recording?.id) live.linkRecording(segIndex, result.recording.id);
     await loadTranscript();
   }
 }
@@ -188,11 +187,10 @@ async function stopRecording(notify = true) {
   if (segmentTimer) clearTimeout(segmentTimer);
   segmentTimer = null;
   if (mediaRecorder?.state === "recording") {
-    live.markSegment();
     mediaRecorder.stop();
     mediaRecorder = null;
   }
-  live.stop();
+  live.stopRecorder();
   mediaStream?.getTracks().forEach((t) => t.stop());
   mediaStream = null;
   if (elapsedTimer) clearInterval(elapsedTimer);
@@ -440,10 +438,15 @@ const transcribing = computed(() => recordings.value.some((r) => ["uploaded", "t
             <CardTitle class="text-base flex items-center gap-2">
               <AudioLines class="w-4 h-4" /> Transcript การประชุม
               <Badge v-if="transcribing" variant="outline" class="ml-1 animate-pulse">กำลังถอดเสียง...</Badge>
-              <Badge v-if="liveStatus === 'live'" variant="outline" class="ml-1 border-red-500/50 text-red-600 dark:text-red-400">
+              <Badge
+                v-if="liveRecorders.length"
+                variant="outline"
+                class="ml-1 border-red-500/50 text-red-600 dark:text-red-400"
+                :title="`ถอดเสียงสดจากเครื่องของ ${liveRecorders.join(', ')}`"
+              >
                 <span class="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse mr-1.5" /> ถอดเสียงสด
               </Badge>
-              <Badge v-else-if="liveStatus === 'connecting' || liveStatus === 'reconnecting'" variant="outline" class="ml-1">
+              <Badge v-if="liveStatus === 'connecting' || liveStatus === 'reconnecting'" variant="outline" class="ml-1">
                 <Loader2 class="w-3 h-3 mr-1 animate-spin" />
                 {{ liveStatus === "connecting" ? "กำลังเชื่อมต่อถอดเสียงสด" : "กำลังเชื่อมต่อใหม่" }}
               </Badge>

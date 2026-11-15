@@ -70,9 +70,14 @@ export class LiveAsrSession {
   audioBytes = 0;
   finals = 0;
 
+  /**
+   * @param client   เบราว์เซอร์ของผู้บันทึก (ได้ ready/error/done — ข้อความแสดงผลมาทาง listener)
+   * @param listener รับ partial/final ไปกระจายให้ผู้ชมทุกคน (live-captions.ts)
+   */
   constructor(
     private readonly client: LiveClient,
     private readonly upstreamUrl = liveUpstreamUrl(),
+    private readonly listener?: (ev: LiveEvent) => void,
   ) {}
 
   start(): void {
@@ -202,6 +207,13 @@ export class LiveAsrSession {
   }
 
   private emit(ev: LiveEvent): void {
+    if (ev.type === "partial" || ev.type === "final") {
+      try {
+        this.listener?.(ev);
+      } catch (err: any) {
+        console.warn("[ASR] live listener error:", err?.message || err);
+      }
+    }
     try {
       this.client.send(JSON.stringify(ev));
     } catch {
