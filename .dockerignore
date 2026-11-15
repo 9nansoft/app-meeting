@@ -14,4 +14,5 @@ demo/
 test/
 .vscode/
 .idea/
-*.md
+*.md# ไฟล์ติดตั้ง ASR บน DGX ไม่เกี่ยวกับ image ของแอป (และอาจมีไฟล์โมเดลหลาย GB ใน data/)
+deploy

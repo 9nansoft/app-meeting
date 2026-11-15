@@ -1,0 +1,57 @@
+# OpenThai2.0 ASR Streaming บน DGX Spark — ติดตั้งด้วย ./install.sh (ดู README.md)
+# ค่าที่ปรับได้อยู่ใน .env ข้างไฟล์นี้ (install.sh สร้างให้ครั้งแรก)
+name: openthai-asr
+
+services:
+  asr:
+    build:
+      context: .
+    image: openthai-asr:local
+    # รันด้วย uid/gid ของผู้ใช้ที่สั่ง install.sh (ไม่ใช่ root) — เป็นเจ้าของ ./data อยู่แล้ว
+    user: "${ASR_UID:-1000}:${ASR_GID:-1000}"
+    working_dir: /models/OpenThai2.0-ASR-Streaming/serve
+    command: ["python", "-m", "uvicorn", "app:app", "--host", "0.0.0.0", "--port", "18081"]
+    ports:
+      # server ของ iApp ไม่มี authentication — ค่าเริ่มต้นเปิดเฉพาะ localhost
+      # ถ้าต้องให้เครื่อง app-meeting เรียกข้ามเครื่อง ให้ตั้ง ASR_BIND เป็น IP ของวงภายใน/Tailscale
+      # ห้ามตั้งเป็น 0.0.0.0 บนเครื่องที่ออกอินเทอร์เน็ตตรง
+      - "${ASR_BIND:-127.0.0.1}:${ASR_PORT:-18081}:18081"
+    environment:
+      CHINDA_DEVICE: cuda
+      CHINDA_PRELOAD: "1"
+      # server ต้องใช้ไฟล์ raw — ไฟล์ *_bias-*.nemo จะถูกปฏิเสธ (bias ซ้ำสองครั้ง)
+      CHINDA_MODEL: /models/OpenThai2.0-ASR-Streaming/openthai2.0-asr-streaming_raw.nemo
+      CHINDA_REPLICAS: "${CHINDA_REPLICAS:-1}"
+      # model card: ค่า 1 ทำให้ crash หลัง request ที่มี speaker labels
+      CHINDA_CUDA_GRAPHS: "0"
+      CHINDA_LOGLEVEL: "${CHINDA_LOGLEVEL:-INFO}"
+      HF_HOME: /data/hf-cache
+    volumes:
+      - ./data/model:/models:ro
+      # โมเดลแยกผู้พูด (nvidia/Nemotron-3-Diarization) ดาวน์โหลดมาเก็บที่นี่เมื่อใช้ mode=meeting ครั้งแรก
+      - ./data/hf-cache:/data/hf-cache
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    shm_size: 2gb
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:18081/v1/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      # CHINDA_PRELOAD=1 โหลดโมเดลก่อนเปิดรับ request — ครั้งแรกใช้เวลาเป็นนาที
+      start_period: 300s
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "3"
