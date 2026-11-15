@@ -10,12 +10,13 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { Switch } from "@/components/ui/switch";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
   Mic, Square, Loader2, Gavel, ListTodo, Clock, Play, FastForward, CheckCircle2,
-  Radio, AudioLines, Link2, Users,
+  Radio, AudioLines, Link2, Users, MonitorPlay,
 } from "lucide-vue-next";
 
 const route = useRoute();
@@ -300,6 +301,20 @@ async function endMeeting() {
 }
 
 const meeting = computed(() => detail.value?.meeting);
+
+/* ---------- ข้อความสดบนจอ TV หน้าห้อง (ผู้จัด/เลขาเปิดเอง ค่าเริ่มต้นปิด) ---------- */
+const liveAvailable = computed(() => !["off", "unavailable"].includes(live.viewerStatus.value));
+const displayCaptions = computed(() => Boolean(meeting.value?.display_live_captions));
+const displaySaving = ref(false);
+async function setDisplayCaptions(enabled: boolean) {
+  displaySaving.value = true;
+  const res = await call(() => (api.meetings as any)[meetingId]["display-captions"].put({ enabled }));
+  displaySaving.value = false;
+  if (res && detail.value?.meeting) {
+    detail.value.meeting.display_live_captions = enabled;
+    toast.success(enabled ? "แสดงข้อความสดบนจอหน้าห้องแล้ว" : "ซ่อนข้อความสดจากจอหน้าห้องแล้ว");
+  }
+}
 const transcribing = computed(() => recordings.value.some((r) => ["uploaded", "transcribing"].includes(r.status)));
 </script>
 
@@ -454,6 +469,18 @@ const transcribing = computed(() => recordings.value.some((r) => ["uploaded", "t
             <CardDescription>
               ข้อความจาก AI ถอดเสียง — กด "เชื่อมวาระ" เพื่อผูกช่วงสนทนาเข้ากับวาระปัจจุบัน
             </CardDescription>
+            <label
+              v-if="liveAvailable"
+              class="flex items-center gap-2 text-xs text-muted-foreground pt-1 w-fit cursor-pointer"
+              title="ให้จอ TV หน้าห้องที่ตั้งค่าลิงก์จอแสดงผลไว้ แสดงข้อความถอดเสียงสดของการประชุมนี้ (เฉพาะผู้จัด/เลขาเปลี่ยนได้)"
+            >
+              <Switch
+                :model-value="displayCaptions"
+                :disabled="displaySaving"
+                @update:model-value="(v: boolean) => setDisplayCaptions(v)"
+              />
+              <MonitorPlay class="w-3.5 h-3.5" /> แสดงข้อความสดบนจอหน้าห้อง
+            </label>
           </CardHeader>
           <CardContent>
             <p v-if="liveStatus === 'error' && liveError" class="mb-3 text-xs text-amber-600 dark:text-amber-400">

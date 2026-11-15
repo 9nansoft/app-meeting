@@ -48,7 +48,7 @@ function readCookie(header: string | null, name: string): string | undefined {
  * กัน Cross-Site WebSocket Hijacking: WebSocket ไม่ผ่าน CORS จึงต้องตรวจ Origin เอง
  * ต้องเป็น host เดียวกับที่ผู้ใช้เปิดหน้าเว็บ (หรืออยู่ใน WS_ALLOWED_ORIGINS)
  */
-function originAllowed(request: UpgradeRequest): boolean {
+export function originAllowed(request: UpgradeRequest): boolean {
   const origin = request.headers.get("origin");
   if (!origin) return false;
   const allowed = (process.env.WS_ALLOWED_ORIGINS || "").split(/[\s,]+/).filter(Boolean);

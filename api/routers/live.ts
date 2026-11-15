@@ -14,6 +14,36 @@ export const liveRoutes = new Elysia({ prefix: "/meetings" })
   /** หน้า live ใช้ตัดสินใจว่าจะเปิดถอดเสียงสด (WebSocket /ws/live-asr) หรือไม่ */
   .get("/live-asr/status", () => ({ enabled: isLiveAsrEnabled() }))
   /**
+   * เปิด/ปิดการแสดงข้อความถอดเสียงสดบนจอ TV หน้าห้อง (ผู้จัด/เลขา/admin)
+   * ค่าเริ่มต้นปิด — การประชุมลับไม่ควรขึ้นจอ
+   */
+  .put(
+    "/:id/display-captions",
+    async ({ params, body, user, set }) => {
+      await ensureSchema();
+      const access = await authorizeMeeting(user, params.id, "manage");
+      if (!access.ok) {
+        set.status = access.status;
+        return { error: access.error };
+      }
+      await db("meetings").where({ id: params.id }).update({ display_live_captions: body.enabled });
+      await writeAudit({
+        userId: Number(user!.id),
+        username: user!.username,
+        action: body.enabled ? "meeting.display_captions.enable" : "meeting.display_captions.disable",
+        entityType: "meetings",
+        entityId: params.id,
+        oldValue: { display_live_captions: access.meeting.display_live_captions ?? false },
+        newValue: { display_live_captions: body.enabled },
+      });
+      return { enabled: body.enabled };
+    },
+    {
+      params: t.Object({ id: t.String() }),
+      body: t.Object({ enabled: t.Boolean() }),
+    },
+  )
+  /**
    * อัปโหลดไฟล์เสียงบันทึกการประชุม (ส่งได้หลายช่วง — ระบบถอดเสียงทันทีที่ได้รับไฟล์)
    * multipart field "file" หรือ binary body + header x-file-name
    */

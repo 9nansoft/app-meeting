@@ -172,6 +172,7 @@ AI_EMBED_MODEL=text-embedding-3-small  # embedding สำหรับค้น�
 
 - **มี AI_API_KEY**: ใช้ LLM สรุปเอกสาร/สร้างรายงาน (บันทึก token usage ลง `ai_model_usage`) และถอดเสียงผ่าน whisper-compatible API
 - **ถอดเสียงสด** (เมื่อตั้ง `OPENTHAI_ASR_URL`): ระหว่างบันทึก หน้า live ส่งเสียงไมค์ (PCM16 16kHz) ผ่าน WebSocket `/ws/live-asr` → แอปตรวจ login + สิทธิ์การประชุม แล้วส่งต่อ `WS /v1/live` บน DGX → ข้อความขึ้นทุกครั้งที่ผู้พูดหยุด และกระจายให้**ทุกคนที่เปิดหน้า live ของการประชุมนั้น**ผ่าน `/ws/live-captions` (คนที่เข้ามาทีหลังเห็นข้อความย้อนหลังที่ยังไม่มี transcript จริงแทน) ข้อความสดไม่บันทึกลง DB — เมื่อไฟล์เสียงช่วง 5 นาทีนั้นถอดเสร็จ transcript จริงจะแสดงแทน (ถ้าถอดเสียงสดใช้ไม่ได้ การบันทึกไฟล์ยังทำงานตามปกติ)
+- **ข้อความสดบนจอ TV หน้าห้อง**: admin กดปุ่มกุญแจที่การ์ดห้อง (หน้าห้องประชุม) เพื่อสร้างลิงก์ `/display?room=<id>&key=<key>` แล้วเปิดค้างบนจอ (key แสดงครั้งเดียว เก็บเฉพาะ hash, สร้างใหม่/ยกเลิกได้) — จอแสดงข้อความสดเฉพาะการประชุมที่กำลังใช้ห้องและผู้จัด/เลขา**เปิดสวิตช์ "แสดงข้อความสดบนจอหน้าห้อง"** ในหน้า live (ค่าเริ่มต้นปิด) ไม่แสดงชื่อผู้บันทึก เปลี่ยนสวิตช์/ยกเลิก key มีผลกับจอภายใน ~15 วินาที
 - **มี OPENTHAI_ASR_URL**: ถอดเสียงผ่าน [OpenThai2.0 ASR](https://huggingface.co/iapp/OpenThai2.0-ASR-Streaming) ที่ self-host บน DGX แทน whisper (ไม่ต้องมี AI_API_KEY) — วิธีติดตั้งดู [deploy/asr-dgx/README.md](deploy/asr-dgx/README.md)
 - **ไม่มี AI_API_KEY**: ทำงานครบวงจรด้วย **heuristic mode** — สรุปแบบ extractive จากข้อความ PDF จริง (ยังอ้างอิงเลขหน้าได้) และ transcript จะเป็นข้อความแจ้งสถานะชัดเจนว่าเป็นโหมดจำลอง — ทุกผลลัพธ์ mark `needs_review` ให้เลขายืนยันเสมอ
 - **OCR ไฟล์สแกน**: ทำงานอัตโนมัติเมื่อสกัด text ไม่ได้ — ถ้าตั้ง `OCR_BASE_URL` ใช้ [OpenThai2.0-OCR-Markdown](https://huggingface.co/iapp/OpenThai2.0-OCR-Markdown) บน DGX ก่อน (sidecar ชุดเดียวกับ e-office, ตารางแปลงเป็นข้อความแถวละบรรทัด) ถ้า sidecar ใช้ไม่ได้จึงใช้ Tesseract (tha+eng) ถ้ามี binary (Docker image ติดตั้งไว้), ไม่มีก็ใช้ AI Vision, ไม่มีทั้งคู่จะแจ้งเลขาให้ตั้งค่า แล้วกด "วิเคราะห์ใหม่" ได้
@@ -192,6 +193,7 @@ AI_EMBED_MODEL=text-embedding-3-small  # embedding สำหรับค้น�
 │     ├─ ai/openthai-asr.ts    # ถอดเสียงผ่าน OpenThai ASR ที่ self-host (POST /v1/transcribe)
 │     ├─ ai/live-asr.ts        # ถอดเสียงสด: ส่งต่อเสียงไป WS /v1/live แล้วส่งข้อความกลับ
 │     ├─ ai/live-captions.ts   # กระจายข้อความสดให้ผู้ชมทุกคนของการประชุม (in-process)
+│     ├─ display-keys.ts       # key จอ TV ต่อห้อง + หาการประชุมที่จอควรแสดงข้อความสด
 │     ├─ ai/heuristic.ts       # fallback ออฟไลน์
 │     ├─ ai/handlers.ts        # โลจิกงาน AI 4 ประเภท
 │     ├─ jobs.ts               # คิวงาน DB-backed (ตาราง ai_jobs) + worker in-process
@@ -207,7 +209,8 @@ AI_EMBED_MODEL=text-embedding-3-small  # embedding สำหรับค้น�
 ├─ public/audio/pcm16-worklet.js  # AudioWorklet แปลงเสียงไมค์เป็น PCM16 16kHz
 ├─ server/routes/ws/            # WebSocket (Nitro — อยู่นอก /api เพราะ Elysia รับ upgrade ไม่ได้)
 │  ├─ live-asr.ts              #   ผู้บันทึกส่งเสียงไปถอดสด
-│  └─ live-captions.ts         #   ผู้ชมรับข้อความสด
+│  ├─ live-captions.ts         #   ผู้ชมรับข้อความสด
+│  └─ display-captions.ts      #   จอ TV หน้าห้องรับข้อความสด (ยืนยันด้วย key ของห้อง)
 └─ server/utils/ws-auth.ts     # ตรวจ Origin + session + สิทธิ์การประชุมของ WebSocket
 ```
 
@@ -252,7 +255,6 @@ bun x nuxt typecheck            # typecheck ทั้งโปรเจกต์
 - **MinIO/S3**: แทนที่ implementation ใน `api/services/storage.ts`
 - **Speaker diarization**: ตั้ง `OPENTHAI_ASR_MODE=meeting` ได้ speaker labels แล้ว แต่เลขผู้พูดนับแยกในแต่ละไฟล์ 5 นาที (ผู้พูด 1 ของช่วงแรกกับช่วงถัดไปอาจเป็นคนละคน) — ต้องจับคู่ผู้พูดข้ามช่วงต่อ
 - **ถอดเสียงสดหลาย instance**: hub ข้อความสด (`api/services/ai/live-captions.ts`) อยู่ใน process เดียว — ถ้ารันแอปหลาย instance ต้องเปลี่ยนเป็น Valkey pub/sub (ตอนนี้ docker-compose รัน instance เดียว)
-- **ข้อความสดบนหน้าจอ TV**: หน้า public display ไม่ต้อง login จึงยังไม่แสดงข้อความสด — ถ้าต้องการ ควรกำหนดสิทธิ์ต่อห้อง/ต่อการประชุมก่อน
 - **pgvector**: ปัจจุบันเก็บ embedding เป็น jsonb + คำนวณ cosine ใน JS (เพียงพอสำหรับหลักพัน chunks) — หากเอกสารโตขึ้นมาก เปลี่ยนคอลัมน์เป็น `vector` ของ pgvector และใช้ index HNSW/IVFFlat
 - **Redis + BullMQ**: แทนที่ `api/services/jobs.ts` เมื่อต้อง scale worker แยก instance
 

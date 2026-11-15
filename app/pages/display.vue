@@ -1,9 +1,9 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from "vue";
+import { ref, computed, onMounted, onUnmounted, watch } from "vue";
 import { useIntervalFn } from "@vueuse/core";
 import { dayjs } from "@/utils/meeting-format";
 import {
-  Building2, MapPin, Clock3, Users, CalendarDays, MonitorPlay, Radio, Armchair,
+  Building2, MapPin, Clock3, Users, CalendarDays, MonitorPlay, Radio, Armchair, Captions,
 } from "lucide-vue-next";
 
 /**
@@ -11,6 +11,8 @@ import {
  * - แสดงภาพรวมทุกห้อง หรือกรองเฉพาะห้อง/ตึกที่เลือก (?room= / ?building=)
  * - auto-refresh ทุก 30 วินาที, นาฬิกาเดินสด
  * - ทีวีที่หน้าห้อง: เปิด http://<host>/display?room=<roomId> ค้างไว้ได้เลย
+ * - ข้อความถอดเสียงสด: เปิดลิงก์ที่ admin สร้าง (/display?room=<roomId>&key=<key>) — key ถูกเก็บในเครื่อง
+ *   แล้วลบออกจาก URL จอจะแสดงข้อความเฉพาะการประชุมที่ผู้จัดเปิด "แสดงบนจอหน้าห้อง"
  */
 definePageMeta({ layout: "display" });
 useSeoMeta({ title: "ตารางห้องประชุมวันนี้" });
@@ -46,7 +48,115 @@ async function refresh() {
   }
 }
 
-onMounted(load);
+/* ---------- ข้อความถอดเสียงสด (/ws/display-captions) ---------- */
+const CAPTION_LINES = 5;
+const keyStorage = (roomId: string) => `display-key:${roomId}`;
+function readKey(roomId: string): string | null {
+  try {
+    return localStorage.getItem(keyStorage(roomId));
+  } catch {
+    return null;
+  }
+}
+
+// รับ key จากลิงก์ครั้งแรก → เก็บในเครื่อง แล้วเอาออกจาก URL (ไม่ให้ค้างในประวัติ/ภาพหน้าจอ)
+const keyFromUrl = (route.query.key as string) || "";
+if (import.meta.client && keyFromUrl && selectedRoom.value !== "all") {
+  try {
+    localStorage.setItem(keyStorage(selectedRoom.value), keyFromUrl);
+  } catch {
+    /* โหมดส่วนตัว — ใช้ key จาก URL ต่อไปในรอบนี้ */
+  }
+  const url = new URL(window.location.href);
+  url.searchParams.delete("key");
+  history.replaceState(history.state, "", url.pathname + url.search);
+}
+
+const captionsActive = ref(false);
+const captionLines = ref<Array<{ id: number; text: string }>>([]);
+const captionPartials = ref<Record<string, string>>({});
+const captionPartial = computed(() => Object.values(captionPartials.value).filter(Boolean).join(" "));
+let captionWs: WebSocket | null = null;
+let captionTimer: ReturnType<typeof setTimeout> | null = null;
+let captionFailures = 0;
+
+function resetCaptions() {
+  captionsActive.value = false;
+  captionLines.value = [];
+  captionPartials.value = {};
+}
+
+function onCaptionMessage(data: string) {
+  let msg: any;
+  try {
+    msg = JSON.parse(data);
+  } catch {
+    return;
+  }
+  if (msg.type === "meeting") {
+    resetCaptions();
+    captionsActive.value = Boolean(msg.active);
+  } else if (msg.type === "snapshot") {
+    captionFailures = 0;
+    captionLines.value = (msg.lines ?? []).slice(-CAPTION_LINES).map((l: any) => ({ id: l.id, text: l.text }));
+    captionPartials.value = Object.fromEntries((msg.partials ?? []).map((p: any) => [p.session, p.text]));
+  } else if (msg.type === "partial") {
+    captionPartials.value = { ...captionPartials.value, [msg.session]: msg.text || "" };
+  } else if (msg.type === "final") {
+    const next = { ...captionPartials.value };
+    delete next[msg.line.session];
+    captionPartials.value = next;
+    captionLines.value = [...captionLines.value, { id: msg.line.id, text: msg.line.text }].slice(-CAPTION_LINES);
+  } else if (msg.type === "session" && !msg.active) {
+    const next = { ...captionPartials.value };
+    delete next[msg.session];
+    captionPartials.value = next;
+  }
+}
+
+function disconnectCaptions() {
+  if (captionTimer) clearTimeout(captionTimer);
+  captionTimer = null;
+  const sock = captionWs;
+  captionWs = null;
+  sock?.close();
+  resetCaptions();
+}
+
+function connectCaptions() {
+  disconnectCaptions();
+  const roomId = selectedRoom.value;
+  if (roomId === "all") return;
+  const key = readKey(roomId) || (keyFromUrl && roomId === route.query.room ? keyFromUrl : "");
+  if (!key) return;
+  const proto = location.protocol === "https:" ? "wss" : "ws";
+  const sock = new WebSocket(
+    `${proto}://${location.host}/ws/display-captions?roomId=${encodeURIComponent(roomId)}&key=${encodeURIComponent(key)}`,
+  );
+  captionWs = sock;
+  sock.onmessage = (ev) => {
+    if (typeof ev.data === "string") onCaptionMessage(ev.data);
+  };
+  sock.onclose = () => {
+    if (captionWs !== sock) return;
+    captionWs = null;
+    resetCaptions();
+    // จอเปิดค้างทั้งวัน — เชื่อมต่อใหม่เรื่อย ๆ (key ถูกยกเลิก/เซิร์ฟเวอร์รีสตาร์ต) ถอยห่างสูงสุด 1 นาที
+    captionFailures += 1;
+    captionTimer = setTimeout(connectCaptions, Math.min(60_000, 2000 * 2 ** Math.min(captionFailures, 5)));
+  };
+}
+
+watch(selectedRoom, () => {
+  captionFailures = 0;
+  connectCaptions();
+});
+
+onMounted(() => {
+  void load();
+  connectCaptions();
+});
+onUnmounted(disconnectCaptions);
 useIntervalFn(refresh, 30_000); // auto refresh ทุก 30 วินาที
 useIntervalFn(() => (now.value = dayjs()), 1000); // นาฬิกาเดินสด
 
@@ -190,7 +300,19 @@ function progress(b: any) {
               </div>
             </div>
 
-            <div v-else class="rounded-2xl border-2 border-emerald-500/60 bg-emerald-500/10 p-6">
+            <!-- ข้อความถอดเสียงสด -->
+            <div
+              v-if="captionsActive && (captionLines.length || captionPartial)"
+              class="rounded-2xl bg-black/60 border border-slate-700 p-6 space-y-2"
+            >
+              <div class="flex items-center gap-2 text-slate-400 text-lg">
+                <Captions class="w-5 h-5" /> ถอดเสียงสด (อาจมีคำผิด)
+              </div>
+              <p v-for="l in captionLines" :key="l.id" class="text-3xl leading-snug text-slate-100">{{ l.text }}</p>
+              <p v-if="captionPartial" class="text-3xl leading-snug text-slate-400 italic">{{ captionPartial }}…</p>
+            </div>
+
+            <div v-if="data.current.length === 0" class="rounded-2xl border-2 border-emerald-500/60 bg-emerald-500/10 p-6">
               <div class="flex items-center gap-3 text-emerald-400 text-xl font-semibold">
                 <Armchair class="w-6 h-6" /> ห้องว่างอยู่ขณะนี้
               </div>

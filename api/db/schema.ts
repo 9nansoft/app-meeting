@@ -585,6 +585,20 @@ export async function ensureSchema(): Promise<void> {
      END $$;`,
   ).catch((err) => console.warn("[Knex] room_bookings FK check:", err.message));
 
+  // ถอดเสียงสดบนจอ TV หน้าห้อง: key ลับต่อห้อง (เก็บเฉพาะ hash — แยกตารางไม่ให้หลุดไปกับ select * ของห้อง)
+  // + ผู้จัดเปิดให้แสดงเป็นรายการประชุม (ค่าเริ่มต้นปิด)
+  if (!(await db.schema.hasTable("room_display_keys"))) {
+    await db.schema.createTable("room_display_keys", (table) => {
+      table.uuid("room_id").primary().references("id").inTable("meeting_rooms").onDelete("CASCADE");
+      table.string("key_hash", 64).notNullable(); // SHA-256 hex ของ key
+      table.integer("created_by").nullable().references("id").inTable("users").onDelete("SET NULL");
+      table.timestamp("created_at", { useTz: true }).defaultTo(db.fn.now());
+    });
+  }
+  await addColumnIfMissing("meetings", "display_live_captions", (t) =>
+    t.boolean("display_live_captions").notNullable().defaultTo(false),
+  );
+
   await seedDefaults();
 }
 

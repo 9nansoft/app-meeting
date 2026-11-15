@@ -21,7 +21,7 @@ import {
 import {
   ChevronLeft, ChevronRight, CalendarDays, Sparkles, Plus, Trash2, Pencil, MapPin,
   Users, CheckCircle2, XCircle, Loader2, Building2, Armchair, Table2, MonitorPlay,
-  UserCog, ImagePlus, Star, Camera, UtensilsCrossed,
+  UserCog, ImagePlus, Star, Camera, UtensilsCrossed, KeyRound, Copy,
 } from "lucide-vue-next";
 
 useSeoMeta({ title: "จองห้องประชุม | AI Smart Meeting" });
@@ -352,6 +352,51 @@ async function deleteRoom(room: any) {
   }
 }
 
+/* ---------- ลิงก์จอ TV หน้าห้อง (แสดงข้อความถอดเสียงสดได้โดยไม่ต้อง login) ---------- */
+const displayKeyRoom = ref<any>(null);
+const displayKeyOpen = ref(false);
+const displayKeyUrl = ref("");
+const displayKeyBusy = ref(false);
+
+function openDisplayKey(room: any) {
+  displayKeyRoom.value = room;
+  displayKeyUrl.value = "";
+  displayKeyOpen.value = true;
+}
+
+async function createDisplayKeyLink() {
+  if (!displayKeyRoom.value) return;
+  displayKeyBusy.value = true;
+  const result: any = await call(() => (api.rooms as any)[displayKeyRoom.value.id]["display-key"].post());
+  displayKeyBusy.value = false;
+  if (result?.path) {
+    displayKeyUrl.value = `${window.location.origin}${result.path}`;
+    displayKeyRoom.value.has_display_key = true;
+    toast.success("สร้างลิงก์จอแสดงผลแล้ว — ลิงก์เดิมของห้องนี้ใช้ไม่ได้แล้ว");
+  }
+}
+
+async function revokeDisplayKeyLink() {
+  if (!displayKeyRoom.value) return;
+  displayKeyBusy.value = true;
+  const result = await call(() => (api.rooms as any)[displayKeyRoom.value.id]["display-key"].delete());
+  displayKeyBusy.value = false;
+  if (result) {
+    displayKeyUrl.value = "";
+    displayKeyRoom.value.has_display_key = false;
+    toast.success("ยกเลิกลิงก์จอแสดงผลแล้ว — จอจะหยุดแสดงข้อความสดภายในไม่กี่วินาที");
+  }
+}
+
+async function copyDisplayKeyUrl() {
+  try {
+    await navigator.clipboard.writeText(displayKeyUrl.value);
+    toast.success("คัดลอกลิงก์แล้ว");
+  } catch {
+    toast.error("คัดลอกไม่ได้ — เลือกข้อความแล้วคัดลอกเอง");
+  }
+}
+
 /* ---------- รูปห้อง ---------- */
 const detailRoom = ref<any>(null);
 const detailOpen = ref(false);
@@ -674,6 +719,14 @@ async function deleteImage(image: any) {
                   @click="openDisplay(room.id)"
                 >
                   <MonitorPlay class="w-4 h-4" />
+                </Button>
+                <Button
+                  v-if="isAdmin"
+                  variant="outline" size="sm"
+                  :title="room.has_display_key ? 'ลิงก์จอ TV (ตั้งค่าแล้ว)' : 'สร้างลิงก์จอ TV ที่แสดงข้อความถอดเสียงสด'"
+                  @click="openDisplayKey(room)"
+                >
+                  <KeyRound class="w-4 h-4" :class="room.has_display_key ? 'text-primary' : ''" />
                 </Button>
                 <Button v-if="isAdmin" variant="outline" size="sm" @click="openRoomForm(room)"><Pencil class="w-4 h-4" /></Button>
                 <Button v-if="isAdmin" variant="outline" size="sm" class="text-destructive" @click="deleteRoom(room)"><Trash2 class="w-4 h-4" /></Button>
@@ -1071,6 +1124,47 @@ async function deleteImage(image: any) {
             <Button @click="detailOpen = false; openBooking(detailRoom, 9)">จองห้องนี้</Button>
           </div>
         </div>
+      </DialogContent>
+    </Dialog>
+
+    <!-- ลิงก์จอ TV หน้าห้อง -->
+    <Dialog :open="displayKeyOpen" @update:open="displayKeyOpen = $event">
+      <DialogContent class="max-w-lg">
+        <DialogHeader>
+          <DialogTitle class="flex items-center gap-2"><KeyRound class="w-5 h-5" /> ลิงก์จอ TV — {{ displayKeyRoom?.name }}</DialogTitle>
+          <DialogDescription>
+            เปิดลิงก์นี้ค้างไว้บนจอหน้าห้อง จอจะแสดงข้อความถอดเสียงสดของการประชุมที่กำลังใช้ห้อง
+            เฉพาะการประชุมที่ผู้จัดเปิด "แสดงข้อความสดบนจอหน้าห้อง" ในหน้า live เท่านั้น
+          </DialogDescription>
+        </DialogHeader>
+        <div class="space-y-3 text-sm">
+          <div v-if="displayKeyUrl" class="space-y-2">
+            <Label>ลิงก์ (แสดงครั้งเดียว — คัดลอกไปเปิดที่จอเลย)</Label>
+            <div class="flex gap-2">
+              <Input :model-value="displayKeyUrl" readonly class="font-mono text-xs" @focus="($event.target as HTMLInputElement).select()" />
+              <Button variant="outline" size="icon" title="คัดลอก" @click="copyDisplayKeyUrl"><Copy class="w-4 h-4" /></Button>
+            </div>
+            <p class="text-xs text-muted-foreground">
+              ลิงก์นี้ให้สิทธิ์ดูข้อความสดของห้องโดยไม่ต้อง login — อย่าส่งต่อ ถ้าหลุดให้กด "สร้างลิงก์ใหม่" หรือ "ยกเลิกลิงก์"
+            </p>
+          </div>
+          <p v-else-if="displayKeyRoom?.has_display_key" class="text-muted-foreground">
+            ห้องนี้มีลิงก์จอแล้ว (ระบบไม่เก็บลิงก์เดิมไว้ให้ดูซ้ำ) — สร้างลิงก์ใหม่ได้ถ้าต้องตั้งจอใหม่ ลิงก์เดิมจะใช้ไม่ได้ทันที
+          </p>
+          <p v-else class="text-muted-foreground">ห้องนี้ยังไม่มีลิงก์จอ TV ที่แสดงข้อความสด</p>
+        </div>
+        <DialogFooter class="gap-2">
+          <Button
+            v-if="displayKeyRoom?.has_display_key"
+            variant="outline" class="text-destructive"
+            :disabled="displayKeyBusy"
+            @click="revokeDisplayKeyLink"
+          >ยกเลิกลิงก์</Button>
+          <Button :disabled="displayKeyBusy" @click="createDisplayKeyLink">
+            <Loader2 v-if="displayKeyBusy" class="w-4 h-4 mr-1 animate-spin" />
+            {{ displayKeyRoom?.has_display_key ? "สร้างลิงก์ใหม่" : "สร้างลิงก์" }}
+          </Button>
+        </DialogFooter>
       </DialogContent>
     </Dialog>
   </div>
