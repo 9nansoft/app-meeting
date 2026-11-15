@@ -267,7 +267,7 @@ bun x nuxt typecheck            # typecheck ทั้งโปรเจกต์
 | `.github/workflows/docker-publish.yml` | PR เข้า `main` | typecheck API + build image (ไม่ push) |
 | | push `main` | build แล้ว push `ghcr.io/9nansoft/app-meeting:latest` และ `:sha-<commit>` |
 | | push tag `v*` | push `:<version>` เช่น `v1.2.3` → `1.2.3`, `1.2` |
-| `.github/workflows/deploy.yml` | สั่งเอง (Actions → Deploy production → Run workflow) | SSH เข้าเครื่อง production แล้ว `docker compose pull app && up -d` |
+| `.github/workflows/deploy.yml` | สั่งเอง (Actions → Deploy production → Run workflow) | SSH เข้าเครื่อง production แล้ว `docker compose pull app && up -d` (จำนวน replica ตาม `APP_REPLICAS`) |
 
 ### ตั้งค่า deploy (ครั้งแรก)
 ใน GitHub: Settings → Secrets and variables → Actions
@@ -283,6 +283,32 @@ workflow deploy จะ login `ghcr.io` ให้เครื่อง production
 mkdir -p ~/app-docker/cloudflared
 cd ~/app-docker
 # วาง docker-compose.yml จาก repo และสร้าง .env (ดู .env.example: PASETO_KEY, VALKEY_PASSWORD, TRUST_PROXY ฯลฯ)
+```
+
+### หลาย instance (scale)
+docker-compose รันแอปหลัง service `proxy` (Caddy) ที่กระจาย request และ WebSocket ไปทุก replica แบบ least-connections
+และพักตัวที่ต่อไม่ได้ (กำลังรีสตาร์ต/deploy) ไว้ 10 วินาที — ตั้งจำนวนใน `.env`:
+
+```
+APP_REPLICAS=3            # คงอยู่ทุกครั้งที่ deploy (หรือสั่งชั่วคราว: docker compose up -d --scale app=3)
+```
+
+สิ่งที่ใช้ร่วมกันระหว่าง replica: PostgreSQL, Valkey (rate limit, ข้อความถอดเสียงสด, การแจ้งจอ TV, การล้าง cache ผู้ใช้),
+volume `app-storage` (ไฟล์ที่อัปโหลด) — คิวงาน AI ใช้ `FOR UPDATE SKIP LOCKED` จึงไม่ทำงานซ้ำ,
+การสร้าง schema ตอนเริ่มและ hash chain ของ security log ใช้ PostgreSQL advisory lock จึงไม่ชนกัน
+ข้อจำกัด: `OPENTHAI_LIVE_MAX_SESSIONS` นับต่อ replica
+
+Cloudflare Tunnel: ตั้ง Public Hostname ให้ service เป็น **`http://proxy:3080`** (ถ้าเดิมเป็น `http://app:3080` ยังใช้ได้
+แต่ข้าม proxy และกระจายโหลดได้ไม่ดี ส่วนถ้าเดิมชี้ IP ของเครื่อง host พอร์ต `APP_PORT` ไม่ต้องแก้ — proxy bind พอร์ตเดิม)
+
+### ย้ายจากเวอร์ชันที่ยังไม่มี volume `app-storage` (ครั้งเดียว)
+เวอร์ชันก่อนหน้าเก็บไฟล์ที่อัปโหลดไว้ใน container (หายเมื่อ container ถูกสร้างใหม่) — คัดลอกออกมาก่อน deploy เวอร์ชันนี้:
+
+```
+docker compose cp app:/app/storage ./storage-backup          # ก่อน deploy (container เดิมยังรันอยู่)
+# deploy ตามปกติ แล้ว
+docker compose cp ./storage-backup/. app:/app/storage/
+docker compose exec -u root app chown -R bun:bun /app/storage
 ```
 
 ### Rollback

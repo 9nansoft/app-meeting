@@ -3,6 +3,7 @@ import { decrypt } from "paseto-ts/v4";
 import { getPasetoKey } from "../routers/auth";
 import { getClientIp, writeSecurityLog } from "../services/logger";
 import { db } from "../db";
+import { onEvent, publishEvent } from "../services/pubsub";
 
 /**
  * สถานะผู้ใช้ปัจจุบันจาก DB (cache สั้น ๆ) — ให้การปิดบัญชี/ลดสิทธิ์มีผลทันที
@@ -18,10 +19,18 @@ interface SessionUserState {
 const SESSION_CACHE_MS = 30_000;
 const sessionUserCache = new Map<number, SessionUserState>();
 
-/** ล้าง cache ของผู้ใช้ (เรียกเมื่อ admin แก้บทบาท/ปิดบัญชี/ลบผู้ใช้/รีเซ็ตรหัส) */
+/**
+ * ล้าง cache ของผู้ใช้ (เรียกเมื่อ admin แก้บทบาท/ปิดบัญชี/ลบผู้ใช้/รีเซ็ตรหัส)
+ * รันหลาย instance: แจ้ง instance อื่นผ่าน Valkey ให้ล้างด้วย (Valkey ล่ม → instance อื่นหมดอายุเองใน 30 วินาที)
+ */
 export function invalidateSessionUser(userId: number | string): void {
   sessionUserCache.delete(Number(userId));
+  publishEvent("session-invalidate", { userId: Number(userId) });
 }
+
+onEvent("session-invalidate", (data: { userId?: unknown }) => {
+  if (typeof data?.userId === "number") sessionUserCache.delete(data.userId);
+});
 
 async function loadSessionUser(userId: number): Promise<SessionUserState | null> {
   const cached = sessionUserCache.get(userId);
