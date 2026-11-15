@@ -1,4 +1,5 @@
 // https://nuxt.com/docs/api/configuration/nuxt-config
+import { fileURLToPath } from 'node:url'
 export default defineNuxtConfig({
   modules: ['@nuxtjs/tailwindcss', 'nuxt-elysia', 'shadcn-nuxt', '@nuxtjs/color-mode'],
   shadcn: {
@@ -38,6 +39,13 @@ export default defineNuxtConfig({
           ? { 'Strict-Transport-Security': 'max-age=31536000; includeSubDomains' }
           : {}),
       },
+    },
+  },
+  // production: entry ของ Bun ที่ปิดอย่างนุ่มนวลเมื่อได้ SIGTERM (rolling deploy ไม่มี downtime)
+  // ตั้งเฉพาะ $production — nuxt dev ใช้ entry ของ Nitro เอง
+  $production: {
+    nitro: {
+      entry: fileURLToPath(new URL('./server/bun-entry.mjs', import.meta.url)),
     },
   },
   nuxtElysia: {

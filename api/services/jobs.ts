@@ -1,4 +1,5 @@
 import { db } from "../db";
+import { isDraining, onShutdown } from "./lifecycle";
 
 export type JobType =
   | "analyze_document"
@@ -37,6 +38,13 @@ export async function enqueueJob(input: EnqueueInput): Promise<string> {
 
 let workerStarted = false;
 let processing = false;
+/** งานที่ worker นี้กำลังทำ — ใช้ตอนปิด process (rolling deploy) */
+let currentJob: { id: string; done: Promise<void> } | null = null;
+
+/** งานที่ค้างสถานะ processing นานเกินนี้ถือว่า worker ตายกลางทาง (crash/kill) → คืนเข้าคิว */
+const STALE_MINUTES = Number(process.env.AI_JOB_STALE_MINUTES) || 30;
+/** งานที่คืนคิวตอนปิด process รอเท่านี้ก่อนให้ worker อื่นหยิบ — กันทำซ้อนกับ process ที่กำลังจะถูก kill */
+const REQUEUE_DELAY_MS = 45_000;
 
 /** เริ่ม worker ใน process เดียวกับ API (poll ทุก 2 วินาที) */
 export function startWorker(): void {
@@ -49,11 +57,45 @@ export function startWorker(): void {
   setInterval(() => {
     void tick().catch((err) => console.error("[Jobs] tick error:", err));
   }, 2000).unref?.();
+  setInterval(() => {
+    void requeueStaleJobs().catch((err) => console.error("[Jobs] stale check error:", err));
+  }, 60_000).unref?.();
+
+  // rolling deploy: หยุดหยิบงานใหม่ รองานที่ทำอยู่ ถ้าไม่ทันก่อนปิด process ให้คืนเข้าคิว
+  onShutdown("ai-jobs", async (deadline) => {
+    const job = currentJob;
+    if (!job) return;
+    const remaining = deadline - Date.now() - 2_000;
+    const finished = await Promise.race([
+      job.done.then(() => true),
+      new Promise<boolean>((resolve) => setTimeout(() => resolve(false), Math.max(0, remaining))),
+    ]);
+    if (finished) return;
+    const n = await db("ai_jobs")
+      .where({ id: job.id, status: "processing" })
+      .update({
+        status: "queued",
+        attempts: db.raw("greatest(attempts - 1, 0)"),
+        run_after: new Date(Date.now() + REQUEUE_DELAY_MS),
+        error: "ถูกคืนเข้าคิวเพราะ instance ปิดระหว่าง deploy",
+      });
+    if (n) console.warn(`[Jobs] requeued ${job.id.slice(0, 8)} — instance shutting down before it finished`);
+  });
   console.log("[Jobs] AI worker started (poll every 2s)");
 }
 
+/** คืนงานที่ค้าง processing นานผิดปกติ (worker ตายโดยไม่ได้ปิดอย่างนุ่มนวล) เข้าคิวใหม่ */
+async function requeueStaleJobs(): Promise<void> {
+  const rows = await db("ai_jobs")
+    .where({ status: "processing" })
+    .where("started_at", "<", db.raw(`now() - interval '${STALE_MINUTES} minutes'`))
+    .update({ status: "queued", run_after: db.fn.now(), error: `ค้างสถานะ processing เกิน ${STALE_MINUTES} นาที — คืนเข้าคิว` })
+    .returning("id");
+  if (rows.length) console.warn(`[Jobs] requeued ${rows.length} stale job(s)`);
+}
+
 async function tick(): Promise<void> {
-  if (processing) return;
+  if (processing || isDraining()) return;
   processing = true;
   try {
     // claim งานแบบ atomic ป้องกัน worker ซ้อนกันในอนาคต
@@ -69,8 +111,11 @@ async function tick(): Promise<void> {
     );
     const job = claimed.rows?.[0];
     if (!job) return;
-    await runJob(job);
+    const done = runJob(job);
+    currentJob = { id: job.id, done };
+    await done;
   } finally {
+    currentJob = null;
     processing = false;
   }
 }

@@ -267,7 +267,7 @@ bun x nuxt typecheck            # typecheck ทั้งโปรเจกต์
 | `.github/workflows/docker-publish.yml` | PR เข้า `main` | typecheck API + build image (ไม่ push) |
 | | push `main` | build แล้ว push `ghcr.io/9nansoft/app-meeting:latest` และ `:sha-<commit>` |
 | | push tag `v*` | push `:<version>` เช่น `v1.2.3` → `1.2.3`, `1.2` |
-| `.github/workflows/deploy.yml` | สั่งเอง (Actions → Deploy production → Run workflow) | SSH เข้าเครื่อง production แล้ว `docker compose pull app && up -d` (จำนวน replica ตาม `APP_REPLICAS`) |
+| `.github/workflows/deploy.yml` | สั่งเอง (Actions → Deploy production → Run workflow) | SSH เข้าเครื่อง production แล้วรัน `scripts/rolling-deploy.sh` — rolling deploy ไม่มี downtime (จำนวน replica ตาม `APP_REPLICAS`) |
 
 ### ตั้งค่า deploy (ครั้งแรก)
 ใน GitHub: Settings → Secrets and variables → Actions
@@ -301,6 +301,23 @@ volume `app-storage` (ไฟล์ที่อัปโหลด) — คิว�
 Cloudflare Tunnel: ตั้ง Public Hostname ให้ service เป็น **`http://proxy:3080`** (ถ้าเดิมเป็น `http://app:3080` ยังใช้ได้
 แต่ข้าม proxy และกระจายโหลดได้ไม่ดี ส่วนถ้าเดิมชี้ IP ของเครื่อง host พอร์ต `APP_PORT` ไม่ต้องแก้ — proxy bind พอร์ตเดิม)
 
+### Rolling deploy (ไม่มี downtime)
+workflow deploy ส่ง [`scripts/rolling-deploy.sh`](scripts/rolling-deploy.sh) ไปรันบนเครื่อง production (รันเองบนเครื่องได้: คัดลอกสคริปต์ไปไว้ข้าง `docker-compose.yml` แล้ว `APP_TAG=sha-abc1234 bash rolling-deploy.sh`)
+
+1. pull image ใหม่ แล้วเปิด container ใหม่ของ app เพิ่มข้างตัวเดิม (จำนวนเท่า `APP_REPLICAS`)
+2. รอ container ใหม่ healthy — `GET /api/health` ตอบ 200 เมื่อ schema พร้อมและต่อ PostgreSQL ได้
+   (**ไม่ healthy ภายใน 5 นาที → ลบตัวใหม่ทิ้ง ตัวเดิมให้บริการต่อ = rollback อัตโนมัติ**)
+3. รอ proxy เห็นตัวใหม่ แล้ว `docker stop` ตัวเดิมทีละตัว — แอปได้ SIGTERM แล้วปิดอย่างนุ่มนวล ([`server/bun-entry.mjs`](server/bun-entry.mjs)):
+   หยุดรับ connection ใหม่ทันที (proxy ส่งไปตัวอื่น), ทำ request ที่ค้างให้จบ, ปิด WebSocket ด้วย 1012 ให้หน้าเว็บต่อใหม่ที่ตัวอื่น
+   (ถอดเสียงสดหายช่วงต่อใหม่ ~1 วินาที — ไฟล์เสียงที่บันทึกไม่กระทบ), เขียน security log ที่ค้างให้หมด
+   และคืนงาน AI ที่ทำไม่ทันเข้าคิว (`SHUTDOWN_TIMEOUT_MS` ค่าเริ่มต้น 25 วินาที)
+
+งาน AI ที่ค้างสถานะ processing เพราะ instance ตายกะทันหัน (ไม่ได้ปิดอย่างนุ่มนวล) จะถูกคืนเข้าคิวเองหลัง `AI_JOB_STALE_MINUTES` (30 นาที)
+`/api/health` ไม่ลง access log (เรียกทุก 5 วินาทีต่อ replica)
+
+> deploy ครั้งแรกที่ย้ายจาก docker-compose.yml แบบเดิม (app bind พอร์ต host เอง) สคริปต์จะ up ทั้งชุดหนึ่งครั้ง (มี downtime สั้น ๆ ครั้งเดียว)
+> เพราะ proxy bind พอร์ตเดิมไม่ได้จนกว่า app เดิมจะถูกปิด — ครั้งต่อไปเป็น rolling ทั้งหมด
+
 ### ย้ายจากเวอร์ชันที่ยังไม่มี volume `app-storage` (ครั้งเดียว)
 เวอร์ชันก่อนหน้าเก็บไฟล์ที่อัปโหลดไว้ใน container (หายเมื่อ container ถูกสร้างใหม่) — คัดลอกออกมาก่อน deploy เวอร์ชันนี้:
 
@@ -312,7 +329,8 @@ docker compose exec -u root app chown -R bun:bun /app/storage
 ```
 
 ### Rollback
-deploy tag เก่าได้จากหน้า Run workflow (เช่น `sha-abc1234`) หรือบนเครื่อง: `APP_TAG=sha-abc1234 docker compose up -d`
+deploy tag เก่าได้จากหน้า Run workflow (เช่น `sha-abc1234`) — เป็น rolling deploy เหมือนกัน
+หรือบนเครื่อง: `APP_TAG=sha-abc1234 bash rolling-deploy.sh` (`docker compose up -d` ตรง ๆ ก็ได้แต่มี downtime)
 
 ---
 Built with [Nuxt](https://nuxt.com/), [Elysia](https://elysiajs.com/), and [Shadcn-Vue](https://www.shadcn-vue.com/)

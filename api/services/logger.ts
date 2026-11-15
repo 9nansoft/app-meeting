@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
 import { db } from "../db";
+import { onShutdown } from "./lifecycle";
 
 /**
  * ระบบบันทึก log ความมั่นคงปลอดภัย (Security Log)
@@ -113,6 +114,14 @@ export function writeSecurityLog(entry: SecurityLogEntry): Promise<void> {
     });
   });
 }
+
+// ปิด process (rolling deploy): เขียน log ที่ค้างให้หมดก่อน — log ของ request สุดท้ายต้องไม่หาย
+onShutdown("security-log", async () => {
+  while (flushing || pending.length) {
+    if (!flushing && pending.length) flushing = flushSecurityLogs().finally(() => (flushing = null));
+    await flushing;
+  }
+});
 
 async function flushSecurityLogs(): Promise<void> {
   while (pending.length) {

@@ -62,7 +62,13 @@ jobs:
           printf '%s\n' "$SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
           chmod 644 ~/.ssh/known_hosts
 
-      - name: Pull image and restart
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: scripts/rolling-deploy.sh
+          sparse-checkout-cone-mode: false
+
+      - name: Rolling deploy (ไม่มี downtime)
         env:
           GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GHCR_USER: ${{ github.actor }}
@@ -70,5 +76,5 @@ jobs:
           ssh_run() { ssh -i ~/.ssh/id_deploy -o StrictHostKeyChecking=yes -o BatchMode=yes "$SSH_USER@$SSH_HOST" "$@"; }
           printf '%s' "$GHCR_TOKEN" | ssh_run "docker login ghcr.io -u '$GHCR_USER' --password-stdin"
           trap 'ssh_run "docker logout ghcr.io" || true' EXIT
-          ssh_run "cd '$DEPLOY_PATH' && APP_TAG='$APP_TAG' docker compose pull app && APP_TAG='$APP_TAG' docker compose up -d --remove-orphans && docker image prune -f"
-          ssh_run "cd '$DEPLOY_PATH' && docker compose ps"
+          # เปิด container ใหม่ข้างตัวเดิม รอ healthy แล้วปิดตัวเดิมอย่างนุ่มนวล — ไม่ healthy → rollback อัตโนมัติ
+          ssh_run "cd '$DEPLOY_PATH' && APP_TAG='$APP_TAG' bash -s" < scripts/rolling-deploy.sh
