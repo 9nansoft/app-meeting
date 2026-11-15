@@ -3,34 +3,150 @@ services:
     # build และ push โดย GitHub Actions (.github/workflows/docker-publish.yml)
     # APP_TAG เลือก tag ได้ เช่น sha-abc1234 เพื่อ rollback (ค่าเริ่มต้น latest)
     image: ghcr.io/9nansoft/app-meeting:${APP_TAG:-latest}
-    ports:
-      # เปิดเฉพาะ localhost — ผู้ใช้ภายนอกเข้าผ่าน Cloudflare Tunnel เท่านั้น
-      # (ถ้าเปิดสู่ภายนอกตรง ๆ จะปลอม CF-Connecting-IP ใน security log ได้)
-      # ถ้า Tunnel ตั้ง service เป็น IP ของเครื่อง host ให้เปลี่ยนเป็น http://app:3080 หรือกำหนด APP_BIND
-      - ${APP_BIND:-127.0.0.1}:${APP_PORT:-3080}:3080
+    # จำนวน instance ของแอป (ค่าเริ่มต้น 1) — ตั้ง APP_REPLICAS ใน .env ให้คงอยู่ทุกครั้งที่ deploy
+    # หรือสั่งชั่วคราว: docker compose up -d --scale app=3
+    # ไม่เปิดพอร์ตออก host เอง (หลาย replica bind พอร์ตเดียวกันไม่ได้) — ทุก request ผ่าน service proxy
+    deploy:
+      replicas: ${APP_REPLICAS:-1}
     # ส่งค่าใน .env เป็น environment variable (Docker อ่านไฟล์บน host เอง)
     # แทนการ mount ไฟล์เข้า container — container รันเป็นผู้ใช้ bun (ไม่ใช่ root)
     # จึงอ่าน .env ที่ตั้งสิทธิ์ 600 root ไม่ได้ และไฟล์ secret ไม่ต้องอยู่ใน container
     env_file:
       - .env
     environment:
-      # rate limit (login/register/csp-report) ใช้ตัวนับร่วมกันใน Valkey — ถ้า Valkey ล่ม แอปใช้ตัวนับในหน่วยความจำแทน
+      # ไฟล์ที่อัปโหลด (PDF/เสียง) อยู่ใน volume ที่ทุก replica ใช้ร่วมกัน และไม่หายเมื่อ deploy image ใหม่
+      STORAGE_DIR: /app/storage
+      # Valkey ใช้ร่วมกันทุก instance: ตัวนับ rate limit (login/register/csp-report) + pub/sub ข้อความถอดเสียงสด/จอ TV
+      # ถ้า Valkey ล่ม แอปใช้ข้อมูลในหน่วยความจำแทน (ใช้งานต่อได้ภายใน instance เดียวกัน)
       REDIS_URL: redis://:${VALKEY_PASSWORD:?ตั้ง VALKEY_PASSWORD ใน .env (สร้างด้วย openssl rand -hex 32)}@valkey:6379
+    volumes:
+      - app-storage:/app/storage
     depends_on:
       - valkey
     restart: always
+    # พร้อมรับงานจริง (schema + PostgreSQL) — scripts/rolling-deploy.sh รอให้ healthy ก่อนปิดตัวเดิม
+    # ใช้ bash /dev/tcp (มีใน image) แทนการเปิด process bun ทุกครั้ง
     healthcheck:
-      test: ["CMD", "bash", "-c", "</dev/tcp/localhost/3080"]
-      interval: 30s
-      timeout: 10s
-      retries: 5
+      test:
+        - CMD
+        - bash
+        - -c
+        - "exec 3<>/dev/tcp/127.0.0.1/3080 && printf 'GET /api/health HTTP/1.0\\r\\nHost: localhost\\r\\n\\r\\n' >&3 && head -n1 <&3 | grep -q ' 200 '"
+      interval: 5s
+      timeout: 5s
+      retries: 3
+      start_period: 120s
+    # SIGTERM → ปิดอย่างนุ่มนวล (server/bun-entry.mjs) ไม่เกิน SHUTDOWN_TIMEOUT_MS (25s) — เผื่อเวลาก่อน SIGKILL
+    stop_grace_period: 40s
     logging:
       driver: json-file
       options:
         max-size: "50m"
         max-file: "3"
 
-  # Valkey (fork ของ Redis ภายใต้ license BSD) — เก็บตัวนับ rate limit เท่านั้น
+  # Reverse proxy หน้าแอป — กระจาย request/WebSocket ไปทุก replica ของ app (least_conn) และเป็นจุดเดียวที่เปิดพอร์ตออก host
+  # รับได้ 2 ทาง (ใช้พร้อมกันได้):
+  #   1. Cloudflare Tunnel (ผู้ใช้ภายนอก) → cloudflared → http://proxy:3080
+  #   2. วงภายใน (ไม่ออกอินเทอร์เน็ต) → https://<APP_DOMAIN> ที่ DNS ภายในชี้มาที่ IP วงภายในของเครื่องนี้
+  #      ใบรับรอง Let's Encrypt ขอผ่าน Cloudflare DNS challenge (เครื่องผู้ใช้เชื่อเองไม่ต้องติดตั้งอะไร)
+  #      — ตั้ง APP_DOMAIN, CLOUDFLARE_API_TOKEN และ LAN_BIND ใน .env (ไม่ตั้ง APP_DOMAIN = ปิดทางนี้)
+  proxy:
+    # Caddy + โมดูล Cloudflare DNS (deploy/proxy/Dockerfile, build โดย docker-publish workflow)
+    image: ghcr.io/9nansoft/app-meeting-proxy:${PROXY_TAG:-caddy-2.11.7-cf-v0.2.4}
+    restart: unless-stopped
+    ports:
+      # ทาง Tunnel: เปิดเฉพาะ localhost — ถ้าเปิดสู่วงอื่นจะปลอม CF-Connecting-IP ใน security log ได้
+      # (ถ้า Tunnel ตั้ง service เป็น IP ของเครื่อง host แทน http://proxy:3080 ให้กำหนด APP_BIND)
+      - ${APP_BIND:-127.0.0.1}:${APP_PORT:-3080}:3080
+      # ทางวงภายใน: ค่าเริ่มต้นเปิดเฉพาะ localhost — ตั้ง LAN_BIND เป็น IP วงภายในของเครื่องเพื่อเปิดให้ผู้ใช้ในองค์กร
+      - ${LAN_BIND:-127.0.0.1}:${LAN_HTTPS_PORT:-443}:8443
+      - ${LAN_BIND:-127.0.0.1}:${LAN_HTTP_PORT:-80}:8080
+    environment:
+      APP_DOMAIN: ${APP_DOMAIN:-}
+      CLOUDFLARE_API_TOKEN: ${CLOUDFLARE_API_TOKEN:-}
+      ACME_EMAIL: ${ACME_EMAIL:-}
+    # เขียน Caddyfile ตอนเริ่ม (ไม่ต้องมีไฟล์ config แยกบนเครื่อง production)
+    # - dynamic a: ถาม Docker DNS หา IP ของทุก replica ใหม่ทุก 5 วินาที (scale ขึ้น/ลงแล้วใช้ได้ทันที)
+    # - replica ไหนต่อไม่ได้ (กำลังรีสตาร์ต/deploy) → พักไว้ 10 วินาทีแล้วลองตัวอื่นแทน
+    # - ไม่จำกัดขนาด body/เวลา response: อัปโหลดเสียง 200MB และ WebSocket ถอดเสียงสดต่อได้นาน
+    # - แอปอ่าน IP ผู้ใช้จาก CF-Connecting-IP (TRUST_PROXY=cloudflare) ทั้งสองทาง:
+    #   ทาง Tunnel ใช้ค่าที่ Cloudflare ใส่มา, ทางวงภายใน Caddy เขียนทับด้วย IP จริงของเครื่องผู้ใช้ (กันปลอม)
+    # - รันด้วย nobody ใช้พอร์ตในตัว container ที่ไม่ต้องมีสิทธิ์พิเศษ (8443/8080) แล้วแมปเป็น 443/80 ที่ host
+    command:
+      - sh
+      - -c
+      - |
+        set -eu
+        upstream() {
+          cat <<UPSTREAM
+          reverse_proxy {
+            dynamic a {
+              name app
+              port 3080
+              refresh 5s
+              versions ipv4
+            }
+            lb_policy least_conn
+            lb_try_duration 10s
+            lb_try_interval 250ms
+            fail_duration 10s
+            $$1
+          }
+        UPSTREAM
+        }
+        {
+          echo "{"
+          echo "  admin off"
+          echo "  persist_config off"
+          echo "  auto_https disable_redirects"
+          echo "  http_port 8080"
+          echo "  https_port 8443"
+          echo "  servers {"
+          echo "    protocols h1 h2"
+          echo "  }"
+          [ -n "$$ACME_EMAIL" ] && echo "  email $$ACME_EMAIL"
+          echo "}"
+          echo ":3080 {"
+          upstream ""
+          echo "}"
+          if [ -n "$$APP_DOMAIN" ]; then
+            case "$$APP_DOMAIN" in
+              *[!A-Za-z0-9.-]*) echo "APP_DOMAIN ไม่ถูกต้อง: $$APP_DOMAIN" >&2; exit 1 ;;
+            esac
+            [ -n "$$CLOUDFLARE_API_TOKEN" ] || { echo "ตั้ง APP_DOMAIN แล้วต้องตั้ง CLOUDFLARE_API_TOKEN ด้วย" >&2; exit 1; }
+            echo "https://$$APP_DOMAIN {"
+            echo "  tls {"
+            echo "    dns cloudflare {env.CLOUDFLARE_API_TOKEN}"
+            echo "    resolvers 1.1.1.1 1.0.0.1"
+            echo "  }"
+            upstream "header_up CF-Connecting-IP {remote_host}"
+            echo "}"
+            echo "http://$$APP_DOMAIN {"
+            echo "  redir https://{host}{uri} permanent"
+            echo "}"
+          fi
+        } > /tmp/Caddyfile
+        exec caddy run --config /tmp/Caddyfile --adapter caddyfile
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /config
+    volumes:
+      # ใบรับรอง Let's Encrypt — เก็บถาวร ไม่ขอใหม่ทุกครั้งที่รีสตาร์ต (ติด rate limit ได้)
+      - caddy-data:/data
+    depends_on:
+      - app
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # Valkey (fork ของ Redis ภายใต้ license BSD) — ตัวนับ rate limit + pub/sub/ข้อความย้อนหลังของการถอดเสียงสด
   # ข้อมูลเป็นของชั่วคราว (มี TTL ทุก key) จึงไม่เปิด persistence และไม่เปิดพอร์ตออก host
   valkey:
     # pin เวอร์ชัน + digest (multi-arch) — 8.1.11 เป็น security release (GHSA-f4q9-j22m-xqq9)
@@ -71,8 +187,12 @@ services:
     # (ดูเวอร์ชัน: https://hub.docker.com/r/cloudflare/cloudflared/tags)
     image: cloudflare/cloudflared:2026.10.7@sha256:4955524aeaa379e154023d5a027c250f7b35041a2e7e950cf13f144bc9b9c5ba
     restart: unless-stopped
+    # ใช้เฉพาะวงภายใน (ไม่มีทางเข้าจากภายนอก): ตั้ง TUNNEL_REPLICAS=0 ใน .env
+    deploy:
+      replicas: ${TUNNEL_REPLICAS:-1}
+    # ตั้ง Public Hostname ของ Tunnel (Cloudflare Zero Trust) ให้ service เป็น http://proxy:3080
     depends_on:
-      - app
+      - proxy
     command: tunnel run --token ${TUNNEL_TOKEN}
     volumes:
       - ./cloudflared:/etc/cloudflared
@@ -81,3 +201,9 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
+
+volumes:
+  # ไฟล์ที่ผู้ใช้อัปโหลด (PDF เอกสารประชุม / ไฟล์เสียง) — สำรองข้อมูล volume นี้ตามนโยบายของหน่วยงาน
+  app-storage:
+  # ใบรับรอง HTTPS ของทางวงภายใน (Caddy)
+  caddy-data:

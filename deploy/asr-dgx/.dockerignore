@@ -1,0 +1,3 @@
+# build context ต้องการแค่ Dockerfile — ห้ามส่งไฟล์โมเดล (หลาย GB) และ .env เข้า docker build
+*
+!Dockerfile

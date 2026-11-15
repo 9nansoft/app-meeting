@@ -136,8 +136,8 @@ PASETO_KEY=k4.local....          # session key (สร้างใหม่ท�
 TRUST_PROXY=cloudflare           # แหล่ง IP ผู้ใช้ใน security log: cloudflare | xff | none
 SESSION_TTL_HOURS=8              # อายุ session (token + cookie)
 CSP_MODE=report-only             # CSP ของหน้าเว็บ: report-only | enforce | off (รายงานดูที่ /admin/logs)
-VALKEY_PASSWORD=...              # บังคับเมื่อใช้ docker-compose (service valkey เก็บตัวนับ rate limit) — openssl rand -hex 32
-REDIS_URL=redis://redis:6379     # (ไม่บังคับ เมื่อรันนอก compose) rate limit ร่วมกันหลาย instance — ไม่ตั้งจะนับในหน่วยความจำ
+VALKEY_PASSWORD=...              # บังคับเมื่อใช้ docker-compose (service valkey: rate limit + ถอดเสียงสดข้าม instance) — openssl rand -hex 32
+REDIS_URL=redis://redis:6379     # (ไม่บังคับ เมื่อรันนอก compose) rate limit + ข้อความถอดเสียงสดร่วมกันหลาย instance — ไม่ตั้งจะเก็บในหน่วยความจำ
 DB_HOST=127.0.0.1                # PostgreSQL
 DB_PORT=5432
 DB_USER=postgres
@@ -153,7 +153,16 @@ AI_STT_MODEL=whisper-1           # ถอดเสียงภาษาไทย
 AI_EMBED_MODEL=text-embedding-3-small  # embedding สำหรับค้นหาเชิงความหมาย
 # AI_WORKER=off                  # ปิด background worker (กรณีแยก instance)
 
+# ถอดเสียงด้วย OpenThai2.0 ASR ที่ self-host (deploy/asr-dgx/) — ตั้งแล้วใช้แทน AI_STT_MODEL
+# OPENTHAI_ASR_URL=http://10.0.0.20:18081
+# OPENTHAI_ASR_MODE=standard     # standard | conversation | meeting (มี speaker labels)
+# OPENTHAI_ASR_LANG=th-TH        # th-TH | th-mix
+# OPENTHAI_LIVE_MAX_SESSIONS=4   # ถอดเสียงสดพร้อมกันได้กี่ห้อง
+
 # OCR ไฟล์สแกน (ทำงานอัตโนมัติเมื่อสกัดข้อความไม่ได้)
+# OCR_BASE_URL=http://10.0.0.20:8090  # OpenThai OCR sidecar บน DGX (ใช้ก่อน tesseract)
+# OCR_API_KEY=                   # ค่าเดียวกับใน ocr-sidecar/.env
+# OCR_MODE=single                # single | double
 # OCR_LANGS=tha+eng              # ภาษา tesseract
 # OCR_MAX_PAGES=20               # จำกัดจำนวนหน้าต่อเอกสาร
 # TESSERACT_CMD=tesseract        # path ของ tesseract (Docker image ติดตั้ง+ตั้งค่าให้แล้ว)
@@ -162,8 +171,11 @@ AI_EMBED_MODEL=text-embedding-3-small  # embedding สำหรับค้น�
 ### โหมด AI
 
 - **มี AI_API_KEY**: ใช้ LLM สรุปเอกสาร/สร้างรายงาน (บันทึก token usage ลง `ai_model_usage`) และถอดเสียงผ่าน whisper-compatible API
+- **ถอดเสียงสด** (เมื่อตั้ง `OPENTHAI_ASR_URL`): ระหว่างบันทึก หน้า live ส่งเสียงไมค์ (PCM16 16kHz) ผ่าน WebSocket `/ws/live-asr` → แอปตรวจ login + สิทธิ์การประชุม แล้วส่งต่อ `WS /v1/live` บน DGX → ข้อความขึ้นทุกครั้งที่ผู้พูดหยุด และกระจายให้**ทุกคนที่เปิดหน้า live ของการประชุมนั้น**ผ่าน `/ws/live-captions` (คนที่เข้ามาทีหลังเห็นข้อความย้อนหลังที่ยังไม่มี transcript จริงแทน) ข้อความสดไม่บันทึกลง DB — เมื่อไฟล์เสียงช่วง 5 นาทีนั้นถอดเสร็จ transcript จริงจะแสดงแทน (ถ้าถอดเสียงสดใช้ไม่ได้ การบันทึกไฟล์ยังทำงานตามปกติ) — รันแอปหลาย instance ได้: ข้อความสด การแจ้งจอ TV และข้อความย้อนหลังแชร์กันผ่าน Valkey (`REDIS_URL`) โดยจำกัดจำนวนห้องที่ถอดเสียงสดพร้อมกันต่อ instance (`OPENTHAI_LIVE_MAX_SESSIONS`)
+- **ข้อความสดบนจอ TV หน้าห้อง**: admin กดปุ่มกุญแจที่การ์ดห้อง (หน้าห้องประชุม) เพื่อสร้างลิงก์ `/display?room=<id>&key=<key>` แล้วเปิดค้างบนจอ (key แสดงครั้งเดียว เก็บเฉพาะ hash, สร้างใหม่/ยกเลิกได้) — จอแสดงข้อความสดเฉพาะการประชุมที่กำลังใช้ห้องและผู้จัด/เลขา**เปิดสวิตช์ "แสดงข้อความสดบนจอหน้าห้อง"** ในหน้า live (ค่าเริ่มต้นปิด) ไม่แสดงชื่อผู้บันทึก เปลี่ยนสวิตช์/ยกเลิก key มีผลกับจอทันที
+- **มี OPENTHAI_ASR_URL**: ถอดเสียงผ่าน [OpenThai2.0 ASR](https://huggingface.co/iapp/OpenThai2.0-ASR-Streaming) ที่ self-host บน DGX แทน whisper (ไม่ต้องมี AI_API_KEY) — วิธีติดตั้งดู [deploy/asr-dgx/README.md](deploy/asr-dgx/README.md)
 - **ไม่มี AI_API_KEY**: ทำงานครบวงจรด้วย **heuristic mode** — สรุปแบบ extractive จากข้อความ PDF จริง (ยังอ้างอิงเลขหน้าได้) และ transcript จะเป็นข้อความแจ้งสถานะชัดเจนว่าเป็นโหมดจำลอง — ทุกผลลัพธ์ mark `needs_review` ให้เลขายืนยันเสมอ
-- **OCR ไฟล์สแกน**: ทำงานอัตโนมัติเมื่อสกัด text ไม่ได้ — ใช้ Tesseract (tha+eng) ถ้ามี binary (Docker image ติดตั้งไว้), ไม่มีก็ใช้ AI Vision, ไม่มีทั้งคู่จะแจ้งเลขาให้ตั้งค่า แล้วกด "วิเคราะห์ใหม่" ได้
+- **OCR ไฟล์สแกน**: ทำงานอัตโนมัติเมื่อสกัด text ไม่ได้ — ถ้าตั้ง `OCR_BASE_URL` ใช้ [OpenThai2.0-OCR-Markdown](https://huggingface.co/iapp/OpenThai2.0-OCR-Markdown) บน DGX ก่อน (sidecar ชุดเดียวกับ e-office, ตารางแปลงเป็นข้อความแถวละบรรทัด) ถ้า sidecar ใช้ไม่ได้จึงใช้ Tesseract (tha+eng) ถ้ามี binary (Docker image ติดตั้งไว้), ไม่มีก็ใช้ AI Vision, ไม่มีทั้งคู่จะแจ้งเลขาให้ตั้งค่า แล้วกด "วิเคราะห์ใหม่" ได้
 - **ค้นหาเชิงความหมาย**: มี AI → สร้าง embedding ทุก chunk อัตโนมัติและค้นด้วย vector / ไม่มี AI → ค้นคำตรงกัน (ILIKE) ผลลัพธ์แสดง % ความเกี่ยวข้อง + snippet + เลขหน้าเอกสารเสมอ
 
 ## สถาปัตยกรรม
@@ -178,17 +190,29 @@ AI_EMBED_MODEL=text-embedding-3-small  # embedding สำหรับค้น�
 │  │                           # (+ auth, users เดิม)
 │  └─ services/
 │     ├─ ai/provider.ts        # OpenAI-compatible client (chat + STT)
+│     ├─ ai/openthai-asr.ts    # ถอดเสียงผ่าน OpenThai ASR ที่ self-host (POST /v1/transcribe)
+│     ├─ ai/live-asr.ts        # ถอดเสียงสด: ส่งต่อเสียงไป WS /v1/live แล้วส่งข้อความกลับ
+│     ├─ ai/live-captions.ts   # กระจายข้อความสดให้ผู้ชมทุกคนของการประชุม (ข้าม instance ผ่าน Valkey)
+│     ├─ pubsub.ts             # pub/sub + ข้อความย้อนหลังใน Valkey (Bun.RedisClient) — ไม่ตั้ง REDIS_URL = process เดียว
+│     ├─ display-keys.ts       # key จอ TV ต่อห้อง + หาการประชุมที่จอควรแสดงข้อความสด
 │     ├─ ai/heuristic.ts       # fallback ออฟไลน์
 │     ├─ ai/handlers.ts        # โลจิกงาน AI 4 ประเภท
 │     ├─ jobs.ts               # คิวงาน DB-backed (ตาราง ai_jobs) + worker in-process
 │     ├─ pdf.ts                # สกัดข้อความ PDF แยกหน้า (unpdf) + chunking
-│     ├─ ocr.ts                # OCR ไฟล์สแกน (render หน้า→รูป + Tesseract/AI Vision)
+│     ├─ ocr.ts                # OCR ไฟล์สแกน (OpenThai OCR sidecar → Tesseract → AI Vision)
+│     ├─ openthai-ocr.ts       # client ของ OCR sidecar บน DGX (POST /v1/ocr)
 │     ├─ storage.ts            # storage abstraction (local FS → เปลี่ยนเป็น S3/MinIO ได้)
 │     ├─ audit.ts              # audit log
 │     └─ notifications.ts      # in-app (+ ต่อ LINE OA/email ภายหลังได้)
 ├─ app/pages/                  # dashboard, rooms, meetings, meetings/[id],
 │                              # meetings/[id]/live, meetings/[id]/minutes, followup
-└─ app/composables/            # useAuth, useMeetingApi, useNotifications
+├─ app/composables/            # useAuth, useMeetingApi, useNotifications, useLiveCaptions (ถอดเสียงสด)
+├─ public/audio/pcm16-worklet.js  # AudioWorklet แปลงเสียงไมค์เป็น PCM16 16kHz
+├─ server/routes/ws/            # WebSocket (Nitro — อยู่นอก /api เพราะ Elysia รับ upgrade ไม่ได้)
+│  ├─ live-asr.ts              #   ผู้บันทึกส่งเสียงไปถอดสด
+│  ├─ live-captions.ts         #   ผู้ชมรับข้อความสด
+│  └─ display-captions.ts      #   จอ TV หน้าห้องรับข้อความสด (ยืนยันด้วย key ของห้อง)
+└─ server/utils/ws-auth.ts     # ตรวจ Origin + session + สิทธิ์การประชุมของ WebSocket
 ```
 
 **หลักการตามเอกสารออกแบบ**: API รับคำสั่ง → สร้าง job ในตาราง `ai_jobs` → worker (poll ทุก 2 วินาที, retry 3 ครั้ง) ประมวลผลเบื้องหลัง — API ไม่ค้างแม้ไฟล์ใหญ่ คิวนี้สลับเป็น Redis+BullMQ ได้โดยแก้เพียง `api/services/jobs.ts`
@@ -230,7 +254,7 @@ bun x nuxt typecheck            # typecheck ทั้งโปรเจกต์
 
 - **LINE OA / Email**: เพิ่ม provider ใน `api/services/notifications.ts` (โครง channel รองรับแล้ว)
 - **MinIO/S3**: แทนที่ implementation ใน `api/services/storage.ts`
-- **Speaker diarization**: ผู้ให้บริการ STT ที่รองรับ (segments มีฟิลด์ speaker แล้ว)
+- **Speaker diarization**: ตั้ง `OPENTHAI_ASR_MODE=meeting` ได้ speaker labels แล้ว แต่เลขผู้พูดนับแยกในแต่ละไฟล์ 5 นาที (ผู้พูด 1 ของช่วงแรกกับช่วงถัดไปอาจเป็นคนละคน) — ต้องจับคู่ผู้พูดข้ามช่วงต่อ
 - **pgvector**: ปัจจุบันเก็บ embedding เป็น jsonb + คำนวณ cosine ใน JS (เพียงพอสำหรับหลักพัน chunks) — หากเอกสารโตขึ้นมาก เปลี่ยนคอลัมน์เป็น `vector` ของ pgvector และใช้ index HNSW/IVFFlat
 - **Redis + BullMQ**: แทนที่ `api/services/jobs.ts` เมื่อต้อง scale worker แยก instance
 
@@ -243,7 +267,7 @@ bun x nuxt typecheck            # typecheck ทั้งโปรเจกต์
 | `.github/workflows/docker-publish.yml` | PR เข้า `main` | typecheck API + build image (ไม่ push) |
 | | push `main` | build แล้ว push `ghcr.io/9nansoft/app-meeting:latest` และ `:sha-<commit>` |
 | | push tag `v*` | push `:<version>` เช่น `v1.2.3` → `1.2.3`, `1.2` |
-| `.github/workflows/deploy.yml` | สั่งเอง (Actions → Deploy production → Run workflow) | SSH เข้าเครื่อง production แล้ว `docker compose pull app && up -d` |
+| `.github/workflows/deploy.yml` | สั่งเอง (Actions → Deploy production → Run workflow) | SSH เข้าเครื่อง production แล้วรัน `scripts/rolling-deploy.sh` — rolling deploy ไม่มี downtime (จำนวน replica ตาม `APP_REPLICAS`) |
 
 ### ตั้งค่า deploy (ครั้งแรก)
 ใน GitHub: Settings → Secrets and variables → Actions
@@ -261,8 +285,70 @@ cd ~/app-docker
 # วาง docker-compose.yml จาก repo และสร้าง .env (ดู .env.example: PASETO_KEY, VALKEY_PASSWORD, TRUST_PROXY ฯลฯ)
 ```
 
+### หลาย instance (scale)
+docker-compose รันแอปหลัง service `proxy` (Caddy — ดูหัวข้อทางเข้าวงภายในด้านล่าง) ที่กระจาย request และ WebSocket ไปทุก replica แบบ least-connections
+และพักตัวที่ต่อไม่ได้ (กำลังรีสตาร์ต/deploy) ไว้ 10 วินาที — ตั้งจำนวนใน `.env`:
+
+```
+APP_REPLICAS=3            # คงอยู่ทุกครั้งที่ deploy (หรือสั่งชั่วคราว: docker compose up -d --scale app=3)
+```
+
+สิ่งที่ใช้ร่วมกันระหว่าง replica: PostgreSQL, Valkey (rate limit, ข้อความถอดเสียงสด, การแจ้งจอ TV, การล้าง cache ผู้ใช้),
+volume `app-storage` (ไฟล์ที่อัปโหลด) — คิวงาน AI ใช้ `FOR UPDATE SKIP LOCKED` จึงไม่ทำงานซ้ำ,
+การสร้าง schema ตอนเริ่มและ hash chain ของ security log ใช้ PostgreSQL advisory lock จึงไม่ชนกัน
+ข้อจำกัด: `OPENTHAI_LIVE_MAX_SESSIONS` นับต่อ replica
+
+Cloudflare Tunnel: ตั้ง Public Hostname ให้ service เป็น **`http://proxy:3080`** (ถ้าเดิมเป็น `http://app:3080` ยังใช้ได้
+แต่ข้าม proxy และกระจายโหลดได้ไม่ดี ส่วนถ้าเดิมชี้ IP ของเครื่อง host พอร์ต `APP_PORT` ไม่ต้องแก้ — proxy bind พอร์ตเดิม)
+
+### Rolling deploy (ไม่มี downtime)
+workflow deploy ส่ง [`scripts/rolling-deploy.sh`](scripts/rolling-deploy.sh) ไปรันบนเครื่อง production (รันเองบนเครื่องได้: คัดลอกสคริปต์ไปไว้ข้าง `docker-compose.yml` แล้ว `APP_TAG=sha-abc1234 bash rolling-deploy.sh`)
+
+1. pull image ใหม่ แล้วเปิด container ใหม่ของ app เพิ่มข้างตัวเดิม (จำนวนเท่า `APP_REPLICAS`)
+2. รอ container ใหม่ healthy — `GET /api/health` ตอบ 200 เมื่อ schema พร้อมและต่อ PostgreSQL ได้
+   (**ไม่ healthy ภายใน 5 นาที → ลบตัวใหม่ทิ้ง ตัวเดิมให้บริการต่อ = rollback อัตโนมัติ**)
+3. รอ proxy เห็นตัวใหม่ แล้ว `docker stop` ตัวเดิมทีละตัว — แอปได้ SIGTERM แล้วปิดอย่างนุ่มนวล ([`server/bun-entry.mjs`](server/bun-entry.mjs)):
+   หยุดรับ connection ใหม่ทันที (proxy ส่งไปตัวอื่น), ทำ request ที่ค้างให้จบ, ปิด WebSocket ด้วย 1012 ให้หน้าเว็บต่อใหม่ที่ตัวอื่น
+   (ถอดเสียงสดหายช่วงต่อใหม่ ~1 วินาที — ไฟล์เสียงที่บันทึกไม่กระทบ), เขียน security log ที่ค้างให้หมด
+   และคืนงาน AI ที่ทำไม่ทันเข้าคิว (`SHUTDOWN_TIMEOUT_MS` ค่าเริ่มต้น 25 วินาที)
+
+งาน AI ที่ค้างสถานะ processing เพราะ instance ตายกะทันหัน (ไม่ได้ปิดอย่างนุ่มนวล) จะถูกคืนเข้าคิวเองหลัง `AI_JOB_STALE_MINUTES` (30 นาที)
+`/api/health` ไม่ลง access log (เรียกทุก 5 วินาทีต่อ replica)
+
+> deploy ครั้งแรกที่ย้ายจาก docker-compose.yml แบบเดิม (app bind พอร์ต host เอง) สคริปต์จะ up ทั้งชุดหนึ่งครั้ง (มี downtime สั้น ๆ ครั้งเดียว)
+> เพราะ proxy bind พอร์ตเดิมไม่ได้จนกว่า app เดิมจะถูกปิด — ครั้งต่อไปเป็น rolling ทั้งหมด
+
+### ทางเข้าวงภายใน (HTTPS ตรงถึงเครื่อง ไม่ออกอินเทอร์เน็ต)
+ผู้ใช้ในองค์กรเปิด `https://<APP_DOMAIN>` แล้ววิ่งตรงเข้า service `proxy` บนเครื่องนี้ ส่วนผู้ใช้ภายนอกยังเข้าผ่าน Cloudflare Tunnel ได้พร้อมกัน
+(ปิด Tunnel ได้ด้วย `TUNNEL_REPLICAS=0`) — ต้องเป็น HTTPS เพราะ cookie session ตั้ง `Secure` และเบราว์เซอร์ให้ใช้ไมค์เฉพาะหน้า HTTPS
+
+1. ใน `.env`: `APP_DOMAIN`, `CLOUDFLARE_API_TOKEN` (สิทธิ์ Zone / DNS / Edit เฉพาะ zone นั้น), `LAN_BIND=<IP วงภายในของเครื่อง>`
+2. DNS: ให้เครื่องในองค์กร resolve `APP_DOMAIN` เป็น IP วงภายในของเครื่องนี้ — เพิ่มระเบียนใน DNS ภายในขององค์กร (แนะนำ)
+   หรือสร้างระเบียน A บน Cloudflare แบบ **DNS only** (เมฆสีเทา) ชี้ IP วงภายใน
+   (router บางรุ่นกันการ resolve ชื่อสาธารณะเป็น IP ภายใน — ถ้าเจอให้ใช้ DNS ภายใน)
+   ถ้าใช้ชื่อเดียวกับที่เปิดผ่าน Tunnel ต้องเป็นแบบ split DNS (ภายในชี้ IP วงภายใน ภายนอกชี้ Tunnel)
+3. `docker compose up -d proxy` — Caddy ขอใบรับรอง Let's Encrypt ผ่าน Cloudflare DNS challenge เอง และต่ออายุอัตโนมัติ
+   (เครื่อง server ต้องออกเน็ตไป Let's Encrypt และ Cloudflare API ได้ ส่วนผู้ใช้ไม่ต้อง) ใบรับรองเก็บใน volume `caddy-data`
+
+แอปเห็น IP จริงของผู้ใช้ทั้งสองทางผ่าน `CF-Connecting-IP` (`TRUST_PROXY=cloudflare` เหมือนเดิม):
+ทาง Tunnel Cloudflare ใส่ให้, ทางวงภายใน Caddy เขียนทับด้วย IP ของเครื่องผู้ใช้ — ผู้ใช้ในวงภายในจึงปลอม IP ใน log ไม่ได้
+
+image ของ proxy build จาก [`deploy/proxy/Dockerfile`](deploy/proxy/Dockerfile) (Caddy + โมดูล [caddy-dns/cloudflare](https://github.com/caddy-dns/cloudflare))
+โดย workflow `docker-publish.yml` ได้ tag `caddy-<ver>-cf-<ver>` — ถ้าอัปเดตเวอร์ชันใน Dockerfile ให้แก้ `PROXY_TAG` ค่าเริ่มต้นใน docker-compose.yml ให้ตรงกัน
+
+### ย้ายจากเวอร์ชันที่ยังไม่มี volume `app-storage` (ครั้งเดียว)
+เวอร์ชันก่อนหน้าเก็บไฟล์ที่อัปโหลดไว้ใน container (หายเมื่อ container ถูกสร้างใหม่) — คัดลอกออกมาก่อน deploy เวอร์ชันนี้:
+
+```
+docker compose cp app:/app/storage ./storage-backup          # ก่อน deploy (container เดิมยังรันอยู่)
+# deploy ตามปกติ แล้ว
+docker compose cp ./storage-backup/. app:/app/storage/
+docker compose exec -u root app chown -R bun:bun /app/storage
+```
+
 ### Rollback
-deploy tag เก่าได้จากหน้า Run workflow (เช่น `sha-abc1234`) หรือบนเครื่อง: `APP_TAG=sha-abc1234 docker compose up -d`
+deploy tag เก่าได้จากหน้า Run workflow (เช่น `sha-abc1234`) — เป็น rolling deploy เหมือนกัน
+หรือบนเครื่อง: `APP_TAG=sha-abc1234 bash rolling-deploy.sh` (`docker compose up -d` ตรง ๆ ก็ได้แต่มี downtime)
 
 ---
 Built with [Nuxt](https://nuxt.com/), [Elysia](https://elysiajs.com/), and [Shadcn-Vue](https://www.shadcn-vue.com/)

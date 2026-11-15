@@ -212,7 +212,7 @@ export async function ensureSchema(): Promise<void> {
       table.text("analysis_error").nullable();
       // OCR สำหรับไฟล์สแกน
       table.boolean("ocr_used").notNullable().defaultTo(false);
-      table.string("ocr_method", 20).nullable(); // tesseract | ai-vision
+      table.string("ocr_method", 20).nullable(); // openthai-ocr | tesseract | ai-vision
       table.uuid("replaced_document_id").nullable(); // เวอร์ชันก่อนหน้า
       table.integer("page_count").nullable();
       table.timestamp("created_at", { useTz: true }).defaultTo(db.fn.now());
@@ -584,6 +584,20 @@ export async function ensureSchema(): Promise<void> {
        END IF;
      END $$;`,
   ).catch((err) => console.warn("[Knex] room_bookings FK check:", err.message));
+
+  // ถอดเสียงสดบนจอ TV หน้าห้อง: key ลับต่อห้อง (เก็บเฉพาะ hash — แยกตารางไม่ให้หลุดไปกับ select * ของห้อง)
+  // + ผู้จัดเปิดให้แสดงเป็นรายการประชุม (ค่าเริ่มต้นปิด)
+  if (!(await db.schema.hasTable("room_display_keys"))) {
+    await db.schema.createTable("room_display_keys", (table) => {
+      table.uuid("room_id").primary().references("id").inTable("meeting_rooms").onDelete("CASCADE");
+      table.string("key_hash", 64).notNullable(); // SHA-256 hex ของ key
+      table.integer("created_by").nullable().references("id").inTable("users").onDelete("SET NULL");
+      table.timestamp("created_at", { useTz: true }).defaultTo(db.fn.now());
+    });
+  }
+  await addColumnIfMissing("meetings", "display_live_captions", (t) =>
+    t.boolean("display_live_captions").notNullable().defaultTo(false),
+  );
 
   await seedDefaults();
 }

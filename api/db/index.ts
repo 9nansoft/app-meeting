@@ -5,14 +5,26 @@ import pg from "pg";
 
 let schemaPromise: Promise<void> | null = null;
 
+/** advisory lock ของ PostgreSQL ที่ใช้กันการสร้าง schema พร้อมกันหลาย instance (ค่าคงที่ใด ๆ ที่ไม่ชนกับ lock อื่น) */
+const SCHEMA_LOCK_KEY = 728_140_001;
+
 /**
  * สร้าง/ตรวจสอบ schema ทั้งระบบครั้งเดียวต่อ process
  * (memoize — route ต่าง ๆ เรียกซ้ำได้โดยไม่เป็นภาระฐานข้อมูล)
+ *
+ * รันหลาย instance (docker compose --scale app=N): ถือ advisory lock ระหว่างสร้าง schema
+ * instance อื่นรอจนเสร็จแล้วค่อยตรวจซ้ำ (เจอตารางครบ → ไม่ทำอะไร) ไม่ให้ CREATE TABLE ชนกัน
+ * lock อยู่กับ connection ของ transaction นี้ ส่วนคำสั่งสร้างตารางใช้ connection อื่นใน pool
  */
 export function ensureSchema(): Promise<void> {
   if (!schemaPromise) {
     schemaPromise = import("./schema")
-      .then((m) => m.ensureSchema())
+      .then((m) =>
+        db.transaction(async (trx) => {
+          await trx.raw("select pg_advisory_xact_lock(?)", [SCHEMA_LOCK_KEY]);
+          await m.ensureSchema();
+        }),
+      )
       .then(() => {
         console.log("[Knex] Schema ready (AI Smart Meeting).");
       })

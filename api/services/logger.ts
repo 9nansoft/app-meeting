@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
 import { db } from "../db";
+import { onShutdown } from "./lifecycle";
 
 /**
  * ระบบบันทึก log ความมั่นคงปลอดภัย (Security Log)
@@ -56,12 +57,17 @@ export interface SecurityLogEntry {
 
 const GENESIS_HASH = "GENESIS";
 
-/** hash ของแถวล่าสุด (cache ใน process — เขียนแบบเรียงลำดับจึงไม่แข่งกัน) */
-let cachedLastHash: string | null = null;
-let lastHashLoaded = false;
+/**
+ * advisory lock ของ PostgreSQL ที่ใช้เรียงการเขียน log ข้าม instance
+ * (docker compose --scale app=N) — อ่าน hash แถวล่าสุดและ insert ภายใต้ lock เดียวกัน
+ * chain จึงไม่แตกแม้หลาย instance เขียนพร้อมกัน และ id เรียงตามลำดับ chain
+ */
+const CHAIN_LOCK_KEY = 728_140_002;
+/** จำนวนแถวสูงสุดต่อ transaction — log ที่รอเขียนพร้อมกันถูกรวมเป็นชุดเดียว (lock/อ่าน hash ครั้งเดียว) */
+const MAX_BATCH = 200;
 
-/** คิวเขียนแบบเรียงลำดับ ให้ hash chain ต่อเนื่องแม้มี request พร้อมกัน */
-let writeQueue: Promise<void> = Promise.resolve();
+const pending: Array<{ entry: SecurityLogEntry; done: () => void }> = [];
+let flushing: Promise<void> | null = null;
 
 function sha256(text: string): string {
   return crypto.createHash("sha256").update(text, "utf8").digest("hex");
@@ -94,53 +100,68 @@ function computeEntryHash(prevHash: string, entry: SecurityLogEntry, createdAt: 
   return sha256(material);
 }
 
-async function loadLastHash(): Promise<string> {
-  if (lastHashLoaded) return cachedLastHash ?? GENESIS_HASH;
-  try {
-    const row = await db("security_logs").select("entry_hash").orderBy("id", "desc").limit(1).first();
-    cachedLastHash = (row?.entry_hash as string) ?? null;
-  } catch (err) {
-    console.error("[SecurityLog] cannot load last hash:", err);
-    cachedLastHash = null;
-  }
-  lastHashLoaded = true;
-  return cachedLastHash ?? GENESIS_HASH;
-}
 
 /**
  * บันทึก security log 1 แถว — ไม่ throw เมื่อบันทึกไม่สำเร็จ
  * เพื่อไม่ให้กระทบ request หลัก (ยอมเสียแถว log ดีกว่าระบบล่ม)
+ * promise จะ resolve เมื่อเขียนเสร็จ (หรือเขียนไม่สำเร็จ)
  */
 export function writeSecurityLog(entry: SecurityLogEntry): Promise<void> {
-  writeQueue = writeQueue
-    .then(async () => {
-      const prevHash = await loadLastHash();
-      const createdAt = new Date();
-      createdAt.setMilliseconds(0); // ให้อ่านคืนจาก DB ได้ค่าเดิม (parser ตัด ms)
-      const entryHash = computeEntryHash(prevHash, entry, createdAt);
-      await db("security_logs").insert({
-        event_type: entry.eventType,
-        severity: entry.severity ?? "info",
-        user_id: entry.userId ?? null,
-        username: entry.username ?? null,
-        ip: entry.ip ?? null,
-        user_agent: entry.userAgent?.slice(0, 500) ?? null,
-        method: entry.method ?? null,
-        path: entry.path?.slice(0, 500) ?? null,
-        status_code: entry.statusCode ?? null,
-        duration_ms: entry.durationMs ?? null,
-        detail: entry.detail === undefined || entry.detail === null ? null : JSON.stringify(entry.detail),
-        prev_hash: prevHash,
-        entry_hash: entryHash,
-        created_at: createdAt,
-      });
-      cachedLastHash = entryHash;
-      lastHashLoaded = true;
-    })
-    .catch((err) => {
-      console.error("[SecurityLog] failed to write:", err);
+  return new Promise<void>((done) => {
+    pending.push({ entry, done });
+    flushing ??= flushSecurityLogs().finally(() => {
+      flushing = null;
     });
-  return writeQueue;
+  });
+}
+
+// ปิด process (rolling deploy): เขียน log ที่ค้างให้หมดก่อน — log ของ request สุดท้ายต้องไม่หาย
+onShutdown("security-log", async () => {
+  while (flushing || pending.length) {
+    if (!flushing && pending.length) flushing = flushSecurityLogs().finally(() => (flushing = null));
+    await flushing;
+  }
+});
+
+async function flushSecurityLogs(): Promise<void> {
+  while (pending.length) {
+    const batch = pending.splice(0, MAX_BATCH);
+    try {
+      await db.transaction(async (trx) => {
+        await trx.raw("select pg_advisory_xact_lock(?)", [CHAIN_LOCK_KEY]);
+        // อ่านทุกครั้ง (ไม่ cache) — instance อื่นอาจเขียนต่อท้ายไปแล้ว
+        const last = await trx("security_logs").select("entry_hash").orderBy("id", "desc").first();
+        let prevHash = (last?.entry_hash as string) ?? GENESIS_HASH;
+        // insert ทีละแถวตามลำดับ chain ให้ id (sequence) เรียงตรงกับลำดับ hash
+        for (const { entry } of batch) {
+          const createdAt = new Date();
+          createdAt.setMilliseconds(0); // ให้อ่านคืนจาก DB ได้ค่าเดิม (parser ตัด ms)
+          const entryHash = computeEntryHash(prevHash, entry, createdAt);
+          await trx("security_logs").insert({
+            event_type: entry.eventType,
+            severity: entry.severity ?? "info",
+            user_id: entry.userId ?? null,
+            username: entry.username ?? null,
+            ip: entry.ip ?? null,
+            user_agent: entry.userAgent?.slice(0, 500) ?? null,
+            method: entry.method ?? null,
+            path: entry.path?.slice(0, 500) ?? null,
+            status_code: entry.statusCode ?? null,
+            duration_ms: entry.durationMs ?? null,
+            detail: entry.detail === undefined || entry.detail === null ? null : JSON.stringify(entry.detail),
+            prev_hash: prevHash,
+            entry_hash: entryHash,
+            created_at: createdAt,
+          });
+          prevHash = entryHash;
+        }
+      });
+    } catch (err) {
+      console.error(`[SecurityLog] failed to write ${batch.length} row(s):`, err);
+    } finally {
+      for (const { done } of batch) done();
+    }
+  }
 }
 
 export interface ChainVerification {
@@ -285,7 +306,7 @@ export function startLogMaintenance(): void {
  *
  *   cloudflare (ค่าเริ่มต้น) — ใช้ CF-Connecting-IP ที่ Cloudflare เขียนทับให้เสมอ
  *                               (ต้องให้แอปรับ traffic ผ่าน Cloudflare Tunnel เท่านั้น —
- *                               docker-compose bind พอร์ตไว้ที่ 127.0.0.1)
+ *                               docker-compose bind พอร์ตของ proxy ไว้ที่ 127.0.0.1)
  *   xff                      — อยู่หลัง reverse proxy ของเราเอง (Nginx ฯลฯ): ใช้ค่าขวาสุดของ
  *                               X-Forwarded-For (ค่าที่ proxy ตัวที่ใกล้ที่สุดต่อท้าย ปลอมไม่ได้)
  *                               หรือ X-Real-IP

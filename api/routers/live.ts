@@ -1,15 +1,52 @@
 import { Elysia, t } from "elysia";
+import dayjs from "dayjs";
 import { db, ensureSchema } from "../db";
 import { requireRole, readUploadBody } from "./_lib";
 import { writeAudit } from "../services/audit";
 import { saveFile, deleteFile, detectUploadMime } from "../services/storage";
 import { authorizeMeeting } from "../services/access";
 import { enqueueJob } from "../services/jobs";
+import { isLiveAsrEnabled } from "../services/ai/live-asr";
+import { notifyDisplaysForMeeting } from "../services/display-keys";
 
 const MAX_AUDIO_SIZE = 200 * 1024 * 1024; // 200MB
 
 export const liveRoutes = new Elysia({ prefix: "/meetings" })
   .use(requireRole())
+  /** หน้า live ใช้ตัดสินใจว่าจะเปิดถอดเสียงสด (WebSocket /ws/live-asr) หรือไม่ */
+  .get("/live-asr/status", () => ({ enabled: isLiveAsrEnabled() }))
+  /**
+   * เปิด/ปิดการแสดงข้อความถอดเสียงสดบนจอ TV หน้าห้อง (ผู้จัด/เลขา/admin)
+   * ค่าเริ่มต้นปิด — การประชุมลับไม่ควรขึ้นจอ
+   */
+  .put(
+    "/:id/display-captions",
+    async ({ params, body, user, set }) => {
+      await ensureSchema();
+      const access = await authorizeMeeting(user, params.id, "manage");
+      if (!access.ok) {
+        set.status = access.status;
+        return { error: access.error };
+      }
+      await db("meetings").where({ id: params.id }).update({ display_live_captions: body.enabled });
+      // จอ TV ของห้องที่การประชุมนี้จองไว้เปลี่ยนทันที (ไม่ต้องรอรอบตรวจ 15 วินาที)
+      await notifyDisplaysForMeeting(params.id);
+      await writeAudit({
+        userId: Number(user!.id),
+        username: user!.username,
+        action: body.enabled ? "meeting.display_captions.enable" : "meeting.display_captions.disable",
+        entityType: "meetings",
+        entityId: params.id,
+        oldValue: { display_live_captions: access.meeting.display_live_captions ?? false },
+        newValue: { display_live_captions: body.enabled },
+      });
+      return { enabled: body.enabled };
+    },
+    {
+      params: t.Object({ id: t.String() }),
+      body: t.Object({ enabled: t.Boolean() }),
+    },
+  )
   /**
    * อัปโหลดไฟล์เสียงบันทึกการประชุม (ส่งได้หลายช่วง — ระบบถอดเสียงทันทีที่ได้รับไฟล์)
    * multipart field "file" หรือ binary body + header x-file-name
@@ -143,9 +180,16 @@ export const liveRoutes = new Elysia({ prefix: "/meetings" })
         .orderBy("sequence_no", "asc");
       if (query.after) q.where("created_at", ">", query.after);
       const segments = await q;
-      const recordings = await db("meeting_recordings")
+      // ended_at/duration_seconds: หน้า live ใช้เอาข้อความถอดเสียงสดที่ transcript จริงครอบคลุมแล้วออก
+      const rows = await db("meeting_recordings")
         .where({ meeting_id: params.id })
-        .select("id", "status");
+        .select("id", "status", "ended_at", "duration_seconds");
+      // type parser ของ pg แปลง timestamptz เป็น "YYYY-MM-DD HH:mm:ss" ตามเวลาท้องถิ่นของ server (ไม่มี timezone)
+      // เบราว์เซอร์จะอ่านเป็นเวลาท้องถิ่นของตัวเองแล้วคลาด — ส่ง ISO (UTC) ให้เทียบกับเวลาของข้อความสดได้ถูก
+      const recordings = rows.map((r: any) => ({
+        ...r,
+        ended_at: r.ended_at ? dayjs(r.ended_at).toISOString() : null,
+      }));
       return {
         segments,
         recordings,

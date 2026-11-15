@@ -7,7 +7,11 @@
  *   AI_BASE_URL  — ค่าเริ่มต้น https://api.openai.com/v1
  *   AI_MODEL     — ค่าเริ่มต้น gpt-4o-mini
  *   AI_STT_MODEL — โมเดลถอดเสียง ค่าเริ่มต้น whisper-1
+ *
+ * ถอดเสียง: ถ้าตั้ง OPENTHAI_ASR_URL จะใช้ OpenThai ASR ที่ self-host แทน (ดู openthai-asr.ts)
  */
+import { isOpenThaiAsrConfigured, transcribeWithOpenThai } from "./openthai-asr";
+
 export const AI_BASE_URL = process.env.AI_BASE_URL || "https://api.openai.com/v1";
 export const AI_MODEL = process.env.AI_MODEL || "gpt-4o-mini";
 export const AI_STT_MODEL = process.env.AI_STT_MODEL || "whisper-1";
@@ -15,6 +19,17 @@ export const AI_EMBED_MODEL = process.env.AI_EMBED_MODEL || "text-embedding-3-sm
 
 export function isAiConfigured(): boolean {
   return Boolean(process.env.AI_API_KEY);
+}
+
+/** มีบริการถอดเสียงให้ใช้หรือไม่ — OpenThai ASR ไม่ต้องใช้ AI_API_KEY */
+export function isSttConfigured(): boolean {
+  return isOpenThaiAsrConfigured() || isAiConfigured();
+}
+
+/** ชื่อ provider ถอดเสียงสำหรับบันทึกลง ai_model_usage */
+export function sttProviderName(): string {
+  if (isOpenThaiAsrConfigured()) return "openthai-asr";
+  return isAiConfigured() ? "openai-compatible" : "heuristic";
 }
 
 export interface ChatMessage {
@@ -139,6 +154,7 @@ export interface SttSegment {
 
 /**
  * ถอดเสียงเป็นข้อความแบบมีช่วงเวลา (ภาษาไทย)
+ * ใช้ OpenThai ASR ถ้าตั้ง OPENTHAI_ASR_URL ไว้ ไม่เช่นนั้นใช้ AI_STT_MODEL (whisper-compatible)
  * คืน null เมื่อไม่ได้ตั้งค่า provider → caller ใช้ mock แทน
  */
 export async function transcribeAudio(
@@ -147,6 +163,7 @@ export async function transcribeAudio(
   mime: string,
   language = "th",
 ): Promise<{ segments: SttSegment[]; model: string; text: string } | null> {
+  if (isOpenThaiAsrConfigured()) return transcribeWithOpenThai(audio, fileName, mime);
   if (!isAiConfigured()) return null;
   const form = new FormData();
   form.append("file", new Blob([new Uint8Array(audio)], { type: mime }), fileName);

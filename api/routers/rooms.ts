@@ -2,6 +2,7 @@ import { Elysia, t } from "elysia";
 import { db, ensureSchema } from "../db";
 import { requireRole, readUploadBody, forbidUnlessAdmin } from "./_lib";
 import { writeAudit } from "../services/audit";
+import { createDisplayKey, notifyDisplays, revokeDisplayKey, roomsWithDisplayKey } from "../services/display-keys";
 import { chatCompletion, isAiConfigured } from "../services/ai/provider";
 import { saveFile, readStorageFile, deleteFile, detectUploadMime, fileResponse } from "../services/storage";
 
@@ -34,6 +35,7 @@ async function roomsWithExtras() {
   const rooms: RoomRow[] = await db("meeting_rooms").orderBy("name");
   const equipment: EquipmentRow[] = await db("room_equipment");
   const images = await db("room_images").orderBy("sort_order");
+  const withDisplayKey = await roomsWithDisplayKey();
   const responsibleIds = [...new Set(rooms.map((r) => r.responsible_user_id).filter(Boolean))] as number[];
   const responsibleUsers = responsibleIds.length
     ? await db("users").whereIn("id", responsibleIds).select("id", "name", "username", "position", "email")
@@ -44,6 +46,7 @@ async function roomsWithExtras() {
     images: images.filter((i) => i.room_id === room.id),
     cover_image: images.find((i) => i.room_id === room.id && i.is_cover) || null,
     responsible: responsibleUsers.find((u) => u.id === room.responsible_user_id) || null,
+    has_display_key: withDisplayKey.has(room.id),
   }));
 }
 
@@ -310,6 +313,59 @@ export const roomsRoutes = new Elysia({ prefix: "/rooms" })
         entityId: params.id,
         oldValue: exists,
       });
+      return { success: true };
+    },
+    { params: t.Object({ id: t.String() }) },
+  )
+
+  /**
+   * สร้าง key จอ TV หน้าห้อง (admin) — ใช้แสดงข้อความถอดเสียงสดบนจอโดยไม่ต้อง login
+   * key แสดงครั้งเดียว สร้างใหม่แล้ว key เดิมใช้ไม่ได้ทันที
+   */
+  .post(
+    "/:id/display-key",
+    async ({ params, user, set, request }) => {
+      await ensureSchema();
+      const denied = forbidUnlessAdmin(user, set, request);
+      if (denied) return denied;
+      const room = await db("meeting_rooms").where({ id: params.id }).first().catch(() => null);
+      if (!room) {
+        set.status = 404;
+        return { error: "ไม่พบห้องประชุม" };
+      }
+      const key = await createDisplayKey(params.id, Number(user!.id));
+      // จอที่ใช้ key เดิมถูกตัดทันที
+      notifyDisplays([params.id]);
+      await writeAudit({
+        userId: Number(user!.id),
+        username: user!.username,
+        action: "room.display_key.create",
+        entityType: "meeting_rooms",
+        entityId: params.id,
+      });
+      return { key, path: `/display?room=${params.id}&key=${key}` };
+    },
+    { params: t.Object({ id: t.String() }) },
+  )
+
+  // ยกเลิก key จอ TV (admin) — จอที่ใช้ key นี้หยุดแสดงข้อความสดทันที
+  .delete(
+    "/:id/display-key",
+    async ({ params, user, set, request }) => {
+      await ensureSchema();
+      const denied = forbidUnlessAdmin(user, set, request);
+      if (denied) return denied;
+      const removed = await revokeDisplayKey(params.id).catch(() => false);
+      notifyDisplays([params.id]);
+      if (removed) {
+        await writeAudit({
+          userId: Number(user!.id),
+          username: user!.username,
+          action: "room.display_key.revoke",
+          entityType: "meeting_rooms",
+          entityId: params.id,
+        });
+      }
       return { success: true };
     },
     { params: t.Object({ id: t.String() }) },
