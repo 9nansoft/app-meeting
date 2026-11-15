@@ -2,7 +2,13 @@ import { Elysia, t } from "elysia";
 import { db, ensureSchema } from "../db";
 import { requireRole, forbidUnlessAdmin } from "./_lib";
 import { writeAudit } from "../services/audit";
-import { isAiConfigured, AI_MODEL, AI_BASE_URL } from "../services/ai/provider";
+import { isAiConfigured, AI_MODEL, AI_BASE_URL, AI_STT_MODEL, sttProviderName } from "../services/ai/provider";
+import {
+  isOpenThaiAsrConfigured,
+  OPENTHAI_ASR_URL,
+  OPENTHAI_ASR_MODE,
+  OPENTHAI_ASR_LANG,
+} from "../services/ai/openthai-asr";
 import {
   MIN_LOG_RETENTION_DAYS,
   verifyLogChain,
@@ -21,6 +27,9 @@ export const adminRoutes = new Elysia({ prefix: "/admin" })
         model: AI_MODEL,
         worker: process.env.AI_WORKER !== "off",
       },
+      stt: isOpenThaiAsrConfigured()
+        ? { provider: sttProviderName(), url: OPENTHAI_ASR_URL, mode: OPENTHAI_ASR_MODE, lang: OPENTHAI_ASR_LANG }
+        : { provider: sttProviderName(), model: AI_STT_MODEL },
     };
   })
 

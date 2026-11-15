@@ -153,6 +153,11 @@ AI_STT_MODEL=whisper-1           # ถอดเสียงภาษาไทย
 AI_EMBED_MODEL=text-embedding-3-small  # embedding สำหรับค้นหาเชิงความหมาย
 # AI_WORKER=off                  # ปิด background worker (กรณีแยก instance)
 
+# ถอดเสียงด้วย OpenThai2.0 ASR ที่ self-host (deploy/asr-dgx/) — ตั้งแล้วใช้แทน AI_STT_MODEL
+# OPENTHAI_ASR_URL=http://10.0.0.20:18081
+# OPENTHAI_ASR_MODE=standard     # standard | conversation | meeting (มี speaker labels)
+# OPENTHAI_ASR_LANG=th-TH        # th-TH | th-mix
+
 # OCR ไฟล์สแกน (ทำงานอัตโนมัติเมื่อสกัดข้อความไม่ได้)
 # OCR_LANGS=tha+eng              # ภาษา tesseract
 # OCR_MAX_PAGES=20               # จำกัดจำนวนหน้าต่อเอกสาร
@@ -162,6 +167,7 @@ AI_EMBED_MODEL=text-embedding-3-small  # embedding สำหรับค้น�
 ### โหมด AI
 
 - **มี AI_API_KEY**: ใช้ LLM สรุปเอกสาร/สร้างรายงาน (บันทึก token usage ลง `ai_model_usage`) และถอดเสียงผ่าน whisper-compatible API
+- **มี OPENTHAI_ASR_URL**: ถอดเสียงผ่าน [OpenThai2.0 ASR](https://huggingface.co/iapp/OpenThai2.0-ASR-Streaming) ที่ self-host บน DGX แทน whisper (ไม่ต้องมี AI_API_KEY) — วิธีติดตั้งดู [deploy/asr-dgx/README.md](deploy/asr-dgx/README.md)
 - **ไม่มี AI_API_KEY**: ทำงานครบวงจรด้วย **heuristic mode** — สรุปแบบ extractive จากข้อความ PDF จริง (ยังอ้างอิงเลขหน้าได้) และ transcript จะเป็นข้อความแจ้งสถานะชัดเจนว่าเป็นโหมดจำลอง — ทุกผลลัพธ์ mark `needs_review` ให้เลขายืนยันเสมอ
 - **OCR ไฟล์สแกน**: ทำงานอัตโนมัติเมื่อสกัด text ไม่ได้ — ใช้ Tesseract (tha+eng) ถ้ามี binary (Docker image ติดตั้งไว้), ไม่มีก็ใช้ AI Vision, ไม่มีทั้งคู่จะแจ้งเลขาให้ตั้งค่า แล้วกด "วิเคราะห์ใหม่" ได้
 - **ค้นหาเชิงความหมาย**: มี AI → สร้าง embedding ทุก chunk อัตโนมัติและค้นด้วย vector / ไม่มี AI → ค้นคำตรงกัน (ILIKE) ผลลัพธ์แสดง % ความเกี่ยวข้อง + snippet + เลขหน้าเอกสารเสมอ
@@ -178,6 +184,7 @@ AI_EMBED_MODEL=text-embedding-3-small  # embedding สำหรับค้น�
 │  │                           # (+ auth, users เดิม)
 │  └─ services/
 │     ├─ ai/provider.ts        # OpenAI-compatible client (chat + STT)
+│     ├─ ai/openthai-asr.ts    # ถอดเสียงผ่าน OpenThai ASR ที่ self-host (POST /v1/transcribe)
 │     ├─ ai/heuristic.ts       # fallback ออฟไลน์
 │     ├─ ai/handlers.ts        # โลจิกงาน AI 4 ประเภท
 │     ├─ jobs.ts               # คิวงาน DB-backed (ตาราง ai_jobs) + worker in-process
@@ -230,7 +237,8 @@ bun x nuxt typecheck            # typecheck ทั้งโปรเจกต์
 
 - **LINE OA / Email**: เพิ่ม provider ใน `api/services/notifications.ts` (โครง channel รองรับแล้ว)
 - **MinIO/S3**: แทนที่ implementation ใน `api/services/storage.ts`
-- **Speaker diarization**: ผู้ให้บริการ STT ที่รองรับ (segments มีฟิลด์ speaker แล้ว)
+- **Speaker diarization**: ตั้ง `OPENTHAI_ASR_MODE=meeting` ได้ speaker labels แล้ว แต่เลขผู้พูดนับแยกในแต่ละไฟล์ 5 นาที (ผู้พูด 1 ของช่วงแรกกับช่วงถัดไปอาจเป็นคนละคน) — ต้องจับคู่ผู้พูดข้ามช่วงต่อ
+- **ถอดเสียงสด**: OpenThai ASR มี `WS /v1/live` (ได้ข้อความทุกช่วงหยุดพูด) — ส่ง PCM จากเบราว์เซอร์ผ่าน API เพื่อแสดง transcript ทันทีแทนการรอไฟล์ 5 นาที
 - **pgvector**: ปัจจุบันเก็บ embedding เป็น jsonb + คำนวณ cosine ใน JS (เพียงพอสำหรับหลักพัน chunks) — หากเอกสารโตขึ้นมาก เปลี่ยนคอลัมน์เป็น `vector` ของ pgvector และใช้ index HNSW/IVFFlat
 - **Redis + BullMQ**: แทนที่ `api/services/jobs.ts` เมื่อต้อง scale worker แยก instance
 

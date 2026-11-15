@@ -6,6 +6,8 @@ import {
   parseJsonLoose,
   transcribeAudio,
   isAiConfigured,
+  isSttConfigured,
+  sttProviderName,
   AI_MODEL,
   AI_EMBED_MODEL,
   embedTexts,
@@ -35,10 +37,11 @@ async function logUsage(
   model: string,
   usage: { inputTokens?: number; outputTokens?: number } | null,
   durationMs: number,
+  provider: string = isAiConfigured() ? "openai-compatible" : "heuristic",
 ): Promise<void> {
   await db("ai_model_usage").insert({
     job_id: jobId,
-    provider: isAiConfigured() ? "openai-compatible" : "heuristic",
+    provider,
     model,
     input_tokens: usage?.inputTokens ?? null,
     output_tokens: usage?.outputTokens ?? null,
@@ -244,7 +247,7 @@ export async function handleTranscribeRecording(job: AiJobRow): Promise<void> {
   let segments: Array<{ startMs: number; endMs: number; speaker?: string; text: string; confidence?: number }>;
   let model: string;
 
-  const aiResult = isAiConfigured()
+  const aiResult = isSttConfigured()
     ? await transcribeAudio(buffer, fileName, recording.mime_type).catch((err) => {
         console.error("[AI] transcription provider error, fallback to mock:", err.message);
         return null;
@@ -254,7 +257,7 @@ export async function handleTranscribeRecording(job: AiJobRow): Promise<void> {
   if (aiResult) {
     segments = aiResult.segments.filter((s) => s.text);
     model = aiResult.model;
-    await logUsage(job.id, model, null, Date.now() - started);
+    await logUsage(job.id, model, null, Date.now() - started, sttProviderName());
   } else {
     const agenda = job.agenda_id
       ? await db("meeting_agendas").where({ id: job.agenda_id }).first()
