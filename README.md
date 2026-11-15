@@ -157,6 +157,7 @@ AI_EMBED_MODEL=text-embedding-3-small  # embedding สำหรับค้น�
 # OPENTHAI_ASR_URL=http://10.0.0.20:18081
 # OPENTHAI_ASR_MODE=standard     # standard | conversation | meeting (มี speaker labels)
 # OPENTHAI_ASR_LANG=th-TH        # th-TH | th-mix
+# OPENTHAI_LIVE_MAX_SESSIONS=4   # ถอดเสียงสดพร้อมกันได้กี่ห้อง
 
 # OCR ไฟล์สแกน (ทำงานอัตโนมัติเมื่อสกัดข้อความไม่ได้)
 # OCR_BASE_URL=http://10.0.0.20:8090  # OpenThai OCR sidecar บน DGX (ใช้ก่อน tesseract)
@@ -170,6 +171,7 @@ AI_EMBED_MODEL=text-embedding-3-small  # embedding สำหรับค้น�
 ### โหมด AI
 
 - **มี AI_API_KEY**: ใช้ LLM สรุปเอกสาร/สร้างรายงาน (บันทึก token usage ลง `ai_model_usage`) และถอดเสียงผ่าน whisper-compatible API
+- **ถอดเสียงสด** (เมื่อตั้ง `OPENTHAI_ASR_URL`): ระหว่างบันทึก หน้า live ส่งเสียงไมค์ (PCM16 16kHz) ผ่าน WebSocket `/ws/live-asr` → แอปตรวจ login + สิทธิ์การประชุม แล้วส่งต่อ `WS /v1/live` บน DGX → ข้อความขึ้นทุกครั้งที่ผู้พูดหยุด ข้อความสดไม่บันทึกลง DB — เมื่อไฟล์เสียงช่วง 5 นาทีนั้นถอดเสร็จ transcript จริงจะแสดงแทน (ถ้าถอดเสียงสดใช้ไม่ได้ การบันทึกไฟล์ยังทำงานตามปกติ)
 - **มี OPENTHAI_ASR_URL**: ถอดเสียงผ่าน [OpenThai2.0 ASR](https://huggingface.co/iapp/OpenThai2.0-ASR-Streaming) ที่ self-host บน DGX แทน whisper (ไม่ต้องมี AI_API_KEY) — วิธีติดตั้งดู [deploy/asr-dgx/README.md](deploy/asr-dgx/README.md)
 - **ไม่มี AI_API_KEY**: ทำงานครบวงจรด้วย **heuristic mode** — สรุปแบบ extractive จากข้อความ PDF จริง (ยังอ้างอิงเลขหน้าได้) และ transcript จะเป็นข้อความแจ้งสถานะชัดเจนว่าเป็นโหมดจำลอง — ทุกผลลัพธ์ mark `needs_review` ให้เลขายืนยันเสมอ
 - **OCR ไฟล์สแกน**: ทำงานอัตโนมัติเมื่อสกัด text ไม่ได้ — ถ้าตั้ง `OCR_BASE_URL` ใช้ [OpenThai2.0-OCR-Markdown](https://huggingface.co/iapp/OpenThai2.0-OCR-Markdown) บน DGX ก่อน (sidecar ชุดเดียวกับ e-office, ตารางแปลงเป็นข้อความแถวละบรรทัด) ถ้า sidecar ใช้ไม่ได้จึงใช้ Tesseract (tha+eng) ถ้ามี binary (Docker image ติดตั้งไว้), ไม่มีก็ใช้ AI Vision, ไม่มีทั้งคู่จะแจ้งเลขาให้ตั้งค่า แล้วกด "วิเคราะห์ใหม่" ได้
@@ -188,6 +190,7 @@ AI_EMBED_MODEL=text-embedding-3-small  # embedding สำหรับค้น�
 │  └─ services/
 │     ├─ ai/provider.ts        # OpenAI-compatible client (chat + STT)
 │     ├─ ai/openthai-asr.ts    # ถอดเสียงผ่าน OpenThai ASR ที่ self-host (POST /v1/transcribe)
+│     ├─ ai/live-asr.ts        # ถอดเสียงสด: ส่งต่อเสียงไป WS /v1/live แล้วส่งข้อความกลับ
 │     ├─ ai/heuristic.ts       # fallback ออฟไลน์
 │     ├─ ai/handlers.ts        # โลจิกงาน AI 4 ประเภท
 │     ├─ jobs.ts               # คิวงาน DB-backed (ตาราง ai_jobs) + worker in-process
@@ -199,7 +202,9 @@ AI_EMBED_MODEL=text-embedding-3-small  # embedding สำหรับค้น�
 │     └─ notifications.ts      # in-app (+ ต่อ LINE OA/email ภายหลังได้)
 ├─ app/pages/                  # dashboard, rooms, meetings, meetings/[id],
 │                              # meetings/[id]/live, meetings/[id]/minutes, followup
-└─ app/composables/            # useAuth, useMeetingApi, useNotifications
+├─ app/composables/            # useAuth, useMeetingApi, useNotifications, useLiveCaptions (ถอดเสียงสด)
+├─ public/audio/pcm16-worklet.js  # AudioWorklet แปลงเสียงไมค์เป็น PCM16 16kHz
+└─ server/routes/ws/live-asr.ts   # WebSocket ถอดเสียงสด (Nitro — อยู่นอก /api เพราะ Elysia รับ upgrade ไม่ได้)
 ```
 
 **หลักการตามเอกสารออกแบบ**: API รับคำสั่ง → สร้าง job ในตาราง `ai_jobs` → worker (poll ทุก 2 วินาที, retry 3 ครั้ง) ประมวลผลเบื้องหลัง — API ไม่ค้างแม้ไฟล์ใหญ่ คิวนี้สลับเป็น Redis+BullMQ ได้โดยแก้เพียง `api/services/jobs.ts`
@@ -242,7 +247,7 @@ bun x nuxt typecheck            # typecheck ทั้งโปรเจกต์
 - **LINE OA / Email**: เพิ่ม provider ใน `api/services/notifications.ts` (โครง channel รองรับแล้ว)
 - **MinIO/S3**: แทนที่ implementation ใน `api/services/storage.ts`
 - **Speaker diarization**: ตั้ง `OPENTHAI_ASR_MODE=meeting` ได้ speaker labels แล้ว แต่เลขผู้พูดนับแยกในแต่ละไฟล์ 5 นาที (ผู้พูด 1 ของช่วงแรกกับช่วงถัดไปอาจเป็นคนละคน) — ต้องจับคู่ผู้พูดข้ามช่วงต่อ
-- **ถอดเสียงสด**: OpenThai ASR มี `WS /v1/live` (ได้ข้อความทุกช่วงหยุดพูด) — ส่ง PCM จากเบราว์เซอร์ผ่าน API เพื่อแสดง transcript ทันทีแทนการรอไฟล์ 5 นาที
+- **ถอดเสียงสดให้ผู้ชมทุกคน**: ตอนนี้ข้อความสดเห็นเฉพาะเครื่องที่กดบันทึก — กระจายต่อให้หน้า live ของผู้เข้าประชุมอื่น/หน้าจอ TV ได้ด้วย pub/sub (เช่น Valkey ที่มีอยู่แล้ว)
 - **pgvector**: ปัจจุบันเก็บ embedding เป็น jsonb + คำนวณ cosine ใน JS (เพียงพอสำหรับหลักพัน chunks) — หากเอกสารโตขึ้นมาก เปลี่ยนคอลัมน์เป็น `vector` ของ pgvector และใช้ index HNSW/IVFFlat
 - **Redis + BullMQ**: แทนที่ `api/services/jobs.ts` เมื่อต้อง scale worker แยก instance
 

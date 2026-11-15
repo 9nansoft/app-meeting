@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted } from "vue";
+import { ref, computed, watch, nextTick, onMounted, onUnmounted } from "vue";
 import { toast } from "vue-sonner";
 import { useMeetingApi } from "@/composables/useMeetingApi";
+import { useLiveCaptions } from "@/composables/useLiveCaptions";
 import { dayjs, fmtDateTime, fmtMs, agendaTypeLabel } from "@/utils/meeting-format";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -22,6 +23,22 @@ const meetingId = route.params.id as string;
 useSeoMeta({ title: "Live Meeting | AI Smart Meeting" });
 
 const { api, call, upload } = useMeetingApi();
+const live = useLiveCaptions(meetingId);
+const liveLines = live.lines;
+const livePartial = live.partial;
+const liveStatus = live.status;
+const liveError = live.errorMessage;
+const liveEnd = ref<HTMLElement | null>(null);
+// เลื่อนลงไปที่ข้อความสดล่าสุด
+watch(
+  () => liveLines.value.length,
+  async (n, prev) => {
+    if (n > (prev ?? 0)) {
+      await nextTick();
+      liveEnd.value?.scrollIntoView({ block: "nearest" });
+    }
+  },
+);
 
 const loading = ref(true);
 const detail = ref<any>(null);
@@ -48,6 +65,8 @@ async function loadTranscript() {
   if (data) {
     segments.value = (data as any).segments ?? [];
     recordings.value = (data as any).recordings ?? [];
+    // ไฟล์เสียงช่วงไหนถอดเสร็จแล้ว → เอาข้อความสดของช่วงนั้นออก (แสดง transcript จริงแทน)
+    live.dropTranscribed(recordings.value);
   }
 }
 
@@ -85,6 +104,8 @@ let mediaRecorder: MediaRecorder | null = null;
 let mediaStream: MediaStream | null = null;
 let elapsedTimer: ReturnType<typeof setInterval> | null = null;
 let segStartTime = 0;
+/** ลำดับไฟล์เสียง 5 นาทีในการบันทึกครั้งนี้ — ใช้จับคู่ข้อความสดกับ recording ที่อัปโหลด */
+let segCounter = 0;
 const SEGMENT_MS = 5 * 60 * 1000; // อัปโหลดทุก 5 นาที เพื่อถอดเสียงแบบใกล้เรียลไทม์
 
 async function startRecording() {
@@ -96,6 +117,7 @@ async function startRecording() {
   }
   isRecording.value = true;
   elapsedSec.value = 0;
+  segCounter = 0;
   elapsedTimer = setInterval(() => (elapsedSec.value += 1), 1000);
 
   if (detail.value?.meeting?.status === "scheduled") {
@@ -103,6 +125,8 @@ async function startRecording() {
     await load();
   }
   beginSegment();
+  // ถอดเสียงสด (ถ้าตั้งค่า OpenThai ASR ไว้) — ล้มเหลวก็ไม่กระทบการบันทึกไฟล์
+  void live.start(mediaStream!);
   toast.success("เริ่มบันทึกเสียงแล้ว — ระบบจะถอดเสียงเป็นช่วง ๆ ระหว่างประชุม");
 }
 
@@ -113,13 +137,14 @@ function beginSegment() {
     : "audio/webm";
   mediaRecorder = new MediaRecorder(mediaStream, { mimeType: mime });
   const chunks: Blob[] = [];
+  const segIndex = segCounter++;
   segStartTime = Date.now();
   mediaRecorder.ondataavailable = (e) => e.data.size > 0 && chunks.push(e.data);
   mediaRecorder.onstop = async () => {
     const blob = new Blob(chunks, { type: mime });
     if (blob.size > 1024) {
       const durationSec = Math.round((Date.now() - segStartTime) / 1000);
-      await uploadSegment(blob, durationSec);
+      await uploadSegment(blob, durationSec, segIndex);
     }
   };
   mediaRecorder.start();
@@ -132,6 +157,7 @@ let segmentTimer: ReturnType<typeof setTimeout> | null = null;
 function rotateSegment() {
   // หยุดชั่วคราวเพื่อปิดไฟล์ แล้วเริ่ม segment ใหม่ทันที
   if (mediaRecorder?.state === "recording") {
+    live.markSegment();
     mediaRecorder.stop();
     setTimeout(() => {
       if (isRecording.value) beginSegment();
@@ -139,7 +165,7 @@ function rotateSegment() {
   }
 }
 
-async function uploadSegment(blob: Blob, durationSec: number) {
+async function uploadSegment(blob: Blob, durationSec: number, segIndex: number) {
   uploadingCount.value += 1;
   const headers: Record<string, string> = {
     "x-duration-seconds": String(durationSec),
@@ -153,6 +179,7 @@ async function uploadSegment(blob: Blob, durationSec: number) {
   );
   uploadingCount.value -= 1;
   if (result) {
+    if (result.recording?.id) live.linkRecording(segIndex, result.recording.id);
     await loadTranscript();
   }
 }
@@ -161,9 +188,11 @@ async function stopRecording(notify = true) {
   if (segmentTimer) clearTimeout(segmentTimer);
   segmentTimer = null;
   if (mediaRecorder?.state === "recording") {
+    live.markSegment();
     mediaRecorder.stop();
     mediaRecorder = null;
   }
+  live.stop();
   mediaStream?.getTracks().forEach((t) => t.stop());
   mediaStream = null;
   if (elapsedTimer) clearInterval(elapsedTimer);
@@ -411,13 +440,26 @@ const transcribing = computed(() => recordings.value.some((r) => ["uploaded", "t
             <CardTitle class="text-base flex items-center gap-2">
               <AudioLines class="w-4 h-4" /> Transcript การประชุม
               <Badge v-if="transcribing" variant="outline" class="ml-1 animate-pulse">กำลังถอดเสียง...</Badge>
+              <Badge v-if="liveStatus === 'live'" variant="outline" class="ml-1 border-red-500/50 text-red-600 dark:text-red-400">
+                <span class="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse mr-1.5" /> ถอดเสียงสด
+              </Badge>
+              <Badge v-else-if="liveStatus === 'connecting' || liveStatus === 'reconnecting'" variant="outline" class="ml-1">
+                <Loader2 class="w-3 h-3 mr-1 animate-spin" />
+                {{ liveStatus === "connecting" ? "กำลังเชื่อมต่อถอดเสียงสด" : "กำลังเชื่อมต่อใหม่" }}
+              </Badge>
             </CardTitle>
             <CardDescription>
               ข้อความจาก AI ถอดเสียง — กด "เชื่อมวาระ" เพื่อผูกช่วงสนทนาเข้ากับวาระปัจจุบัน
             </CardDescription>
           </CardHeader>
           <CardContent>
-            <div v-if="segments.length === 0" class="py-16 text-center text-muted-foreground text-sm">
+            <p v-if="liveStatus === 'error' && liveError" class="mb-3 text-xs text-amber-600 dark:text-amber-400">
+              {{ liveError }}
+            </p>
+            <div
+              v-if="segments.length === 0 && liveLines.length === 0 && !livePartial"
+              class="py-16 text-center text-muted-foreground text-sm"
+            >
               <AudioLines class="w-10 h-10 mx-auto mb-2 opacity-30" />
               เริ่มบันทึกเสียง — transcript จะปรากฏที่นี่เมื่อ AI ถอดเสียงเสร็จแต่ละช่วง
             </div>
@@ -443,6 +485,22 @@ const transcribing = computed(() => recordings.value.some((r) => ["uploaded", "t
                   </div>
                   {{ s.text }}
                 </div>
+
+                <!-- ข้อความสด: ยังไม่บันทึก จะถูกแทนด้วย transcript จริงเมื่อไฟล์เสียงช่วงนั้นถอดเสร็จ -->
+                <div
+                  v-if="liveLines.length || livePartial"
+                  class="rounded-lg border border-dashed border-red-500/40 p-3 space-y-1.5 text-sm"
+                >
+                  <div class="text-[11px] text-muted-foreground">
+                    ข้อความสด (ยังไม่บันทึก — จะแทนด้วย transcript จริงเมื่อถอดไฟล์เสียงช่วงนั้นเสร็จ)
+                  </div>
+                  <div v-for="l in liveLines" :key="l.id" class="flex gap-2">
+                    <span class="font-mono text-xs text-muted-foreground shrink-0 pt-0.5">{{ dayjs(l.at).format("HH:mm:ss") }}</span>
+                    <span>{{ l.text }}</span>
+                  </div>
+                  <div v-if="livePartial" class="italic text-muted-foreground">{{ livePartial }}…</div>
+                </div>
+                <div ref="liveEnd" />
               </div>
             </ScrollArea>
           </CardContent>

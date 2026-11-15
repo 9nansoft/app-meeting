@@ -5,11 +5,14 @@ import { writeAudit } from "../services/audit";
 import { saveFile, deleteFile, detectUploadMime } from "../services/storage";
 import { authorizeMeeting } from "../services/access";
 import { enqueueJob } from "../services/jobs";
+import { isLiveAsrEnabled } from "../services/ai/live-asr";
 
 const MAX_AUDIO_SIZE = 200 * 1024 * 1024; // 200MB
 
 export const liveRoutes = new Elysia({ prefix: "/meetings" })
   .use(requireRole())
+  /** หน้า live ใช้ตัดสินใจว่าจะเปิดถอดเสียงสด (WebSocket /ws/live-asr) หรือไม่ */
+  .get("/live-asr/status", () => ({ enabled: isLiveAsrEnabled() }))
   /**
    * อัปโหลดไฟล์เสียงบันทึกการประชุม (ส่งได้หลายช่วง — ระบบถอดเสียงทันทีที่ได้รับไฟล์)
    * multipart field "file" หรือ binary body + header x-file-name

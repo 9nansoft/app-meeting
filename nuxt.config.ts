@@ -20,6 +20,10 @@ export default defineNuxtConfig({
   },
   nitro: {
     preset: 'Bun',
+    // WebSocket ถอดเสียงสด (server/routes/ws/live-asr.ts)
+    experimental: {
+      websocket: true,
+    },
   },
   // HTTP security headers ของหน้าเว็บ (API ตั้งเองใน api/index.ts)
   routeRules: {
