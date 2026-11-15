@@ -212,7 +212,7 @@ export async function ensureSchema(): Promise<void> {
       table.text("analysis_error").nullable();
       // OCR สำหรับไฟล์สแกน
       table.boolean("ocr_used").notNullable().defaultTo(false);
-      table.string("ocr_method", 20).nullable(); // tesseract | ai-vision
+      table.string("ocr_method", 20).nullable(); // openthai-ocr | tesseract | ai-vision
       table.uuid("replaced_document_id").nullable(); // เวอร์ชันก่อนหน้า
       table.integer("page_count").nullable();
       table.timestamp("created_at", { useTz: true }).defaultTo(db.fn.now());

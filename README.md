@@ -159,6 +159,9 @@ AI_EMBED_MODEL=text-embedding-3-small  # embedding สำหรับค้น�
 # OPENTHAI_ASR_LANG=th-TH        # th-TH | th-mix
 
 # OCR ไฟล์สแกน (ทำงานอัตโนมัติเมื่อสกัดข้อความไม่ได้)
+# OCR_BASE_URL=http://10.0.0.20:8090  # OpenThai OCR sidecar บน DGX (ใช้ก่อน tesseract)
+# OCR_API_KEY=                   # ค่าเดียวกับใน ocr-sidecar/.env
+# OCR_MODE=single                # single | double
 # OCR_LANGS=tha+eng              # ภาษา tesseract
 # OCR_MAX_PAGES=20               # จำกัดจำนวนหน้าต่อเอกสาร
 # TESSERACT_CMD=tesseract        # path ของ tesseract (Docker image ติดตั้ง+ตั้งค่าให้แล้ว)
@@ -169,7 +172,7 @@ AI_EMBED_MODEL=text-embedding-3-small  # embedding สำหรับค้น�
 - **มี AI_API_KEY**: ใช้ LLM สรุปเอกสาร/สร้างรายงาน (บันทึก token usage ลง `ai_model_usage`) และถอดเสียงผ่าน whisper-compatible API
 - **มี OPENTHAI_ASR_URL**: ถอดเสียงผ่าน [OpenThai2.0 ASR](https://huggingface.co/iapp/OpenThai2.0-ASR-Streaming) ที่ self-host บน DGX แทน whisper (ไม่ต้องมี AI_API_KEY) — วิธีติดตั้งดู [deploy/asr-dgx/README.md](deploy/asr-dgx/README.md)
 - **ไม่มี AI_API_KEY**: ทำงานครบวงจรด้วย **heuristic mode** — สรุปแบบ extractive จากข้อความ PDF จริง (ยังอ้างอิงเลขหน้าได้) และ transcript จะเป็นข้อความแจ้งสถานะชัดเจนว่าเป็นโหมดจำลอง — ทุกผลลัพธ์ mark `needs_review` ให้เลขายืนยันเสมอ
-- **OCR ไฟล์สแกน**: ทำงานอัตโนมัติเมื่อสกัด text ไม่ได้ — ใช้ Tesseract (tha+eng) ถ้ามี binary (Docker image ติดตั้งไว้), ไม่มีก็ใช้ AI Vision, ไม่มีทั้งคู่จะแจ้งเลขาให้ตั้งค่า แล้วกด "วิเคราะห์ใหม่" ได้
+- **OCR ไฟล์สแกน**: ทำงานอัตโนมัติเมื่อสกัด text ไม่ได้ — ถ้าตั้ง `OCR_BASE_URL` ใช้ [OpenThai2.0-OCR-Markdown](https://huggingface.co/iapp/OpenThai2.0-OCR-Markdown) บน DGX ก่อน (sidecar ชุดเดียวกับ e-office, ตารางแปลงเป็นข้อความแถวละบรรทัด) ถ้า sidecar ใช้ไม่ได้จึงใช้ Tesseract (tha+eng) ถ้ามี binary (Docker image ติดตั้งไว้), ไม่มีก็ใช้ AI Vision, ไม่มีทั้งคู่จะแจ้งเลขาให้ตั้งค่า แล้วกด "วิเคราะห์ใหม่" ได้
 - **ค้นหาเชิงความหมาย**: มี AI → สร้าง embedding ทุก chunk อัตโนมัติและค้นด้วย vector / ไม่มี AI → ค้นคำตรงกัน (ILIKE) ผลลัพธ์แสดง % ความเกี่ยวข้อง + snippet + เลขหน้าเอกสารเสมอ
 
 ## สถาปัตยกรรม
@@ -189,7 +192,8 @@ AI_EMBED_MODEL=text-embedding-3-small  # embedding สำหรับค้น�
 │     ├─ ai/handlers.ts        # โลจิกงาน AI 4 ประเภท
 │     ├─ jobs.ts               # คิวงาน DB-backed (ตาราง ai_jobs) + worker in-process
 │     ├─ pdf.ts                # สกัดข้อความ PDF แยกหน้า (unpdf) + chunking
-│     ├─ ocr.ts                # OCR ไฟล์สแกน (render หน้า→รูป + Tesseract/AI Vision)
+│     ├─ ocr.ts                # OCR ไฟล์สแกน (OpenThai OCR sidecar → Tesseract → AI Vision)
+│     ├─ openthai-ocr.ts       # client ของ OCR sidecar บน DGX (POST /v1/ocr)
 │     ├─ storage.ts            # storage abstraction (local FS → เปลี่ยนเป็น S3/MinIO ได้)
 │     ├─ audit.ts              # audit log
 │     └─ notifications.ts      # in-app (+ ต่อ LINE OA/email ภายหลังได้)

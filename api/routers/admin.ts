@@ -9,6 +9,7 @@ import {
   OPENTHAI_ASR_MODE,
   OPENTHAI_ASR_LANG,
 } from "../services/ai/openthai-asr";
+import { openThaiOcrInfo } from "../services/openthai-ocr";
 import {
   MIN_LOG_RETENTION_DAYS,
   verifyLogChain,
@@ -30,6 +31,9 @@ export const adminRoutes = new Elysia({ prefix: "/admin" })
       stt: isOpenThaiAsrConfigured()
         ? { provider: sttProviderName(), url: OPENTHAI_ASR_URL, mode: OPENTHAI_ASR_MODE, lang: OPENTHAI_ASR_LANG }
         : { provider: sttProviderName(), model: AI_STT_MODEL },
+      ocr: openThaiOcrInfo()
+        ? { provider: "openthai-ocr", ...openThaiOcrInfo() }
+        : { provider: "tesseract/ai-vision" },
     };
   })
 

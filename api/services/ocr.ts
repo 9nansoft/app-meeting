@@ -6,16 +6,19 @@ import fs from "node:fs/promises";
 import { createRequire } from "node:module";
 import { spawn as nodeSpawn } from "node:child_process";
 import { isAiConfigured, AI_BASE_URL, AI_MODEL } from "./ai/provider";
+import { isOpenThaiOcrConfigured, ocrWithOpenThai } from "./openthai-ocr";
 
 /**
  * OCR สำหรับ PDF สแกน (ไม่มี text layer)
  * ลำดับการทำงาน:
- *   1. render หน้า PDF เป็นภาพ PNG ด้วย pdfjs + @napi-rs/canvas
- *   2. สกัดข้อความด้วย tesseract CLI (ถ้าติดตั้งไว้ — เช่นใน Docker image)
- *   3. ถ้าไม่มี tesseract → ใช้ AI Vision (LLM อ่านภาพ) เมื่อตั้งค่า AI_API_KEY
- *   4. ถ้าไม่มีทั้งคู่ → คืน null ให้ handler แจ้งเลขานุการ
+ *   1. ถ้าตั้ง OCR_BASE_URL → ส่ง PDF ทั้งไฟล์ให้ OpenThai OCR sidecar บน DGX (ดู openthai-ocr.ts)
+ *      sidecar ล่ม/ตอบ error → ทำข้อ 2 ต่อ
+ *   2. render หน้า PDF เป็นภาพ PNG ด้วย pdfjs + @napi-rs/canvas
+ *   3. สกัดข้อความด้วย tesseract CLI (ถ้าติดตั้งไว้ — เช่นใน Docker image)
+ *   4. ถ้าไม่มี tesseract → ใช้ AI Vision (LLM อ่านภาพ) เมื่อตั้งค่า AI_API_KEY
+ *   5. ถ้าไม่มีทั้งหมด → คืน null ให้ handler แจ้งเลขานุการ
  *
- * ตัวแปรสภาพแวดล้อม:
+ * ตัวแปรสภาพแวดล้อม (OCR_BASE_URL / OCR_API_KEY / OCR_MODE / OCR_TIMEOUT_MS ดูใน openthai-ocr.ts):
  *   OCR_LANGS       ภาษาของ tesseract (ค่าเริ่มต้น tha+eng)
  *   OCR_MAX_PAGES   จำนวนหน้าสูงสุดที่จะ OCR (ค่าเริ่มต้น 20)
  *   TESSERACT_CMD   path ของ binary tesseract (ถ้าไม่ได้อยู่ใน PATH)
@@ -47,7 +50,7 @@ export interface OcrPage {
 export interface OcrResult {
   pages: OcrPage[];
   pageCount: number;
-  method: "tesseract" | "ai-vision";
+  method: "openthai-ocr" | "tesseract" | "ai-vision";
 }
 
 /** render แต่ละหน้า PDF เป็น PNG Buffer */
@@ -221,6 +224,15 @@ export async function ocrPdf(
 ): Promise<OcrResult | null> {
   const langs = process.env.OCR_LANGS || "tha+eng";
   const maxPages = opts.maxPages ?? Number(process.env.OCR_MAX_PAGES || 20);
+
+  // OpenThai OCR บน DGX แม่นกว่า tesseract มากสำหรับภาษาไทยและอ่านตารางได้ — ลองก่อนเมื่อตั้งค่าไว้
+  if (isOpenThaiOcrConfigured()) {
+    const viaSidecar = await ocrWithOpenThai(buffer, opts.hint).catch((err) => {
+      console.warn("[OCR] OpenThai OCR sidecar failed, fallback to tesseract/AI Vision:", err.message);
+      return null;
+    });
+    if (viaSidecar?.pages.length) return { ...viaSidecar, method: "openthai-ocr" };
+  }
 
   // tesseract เร็วกว่าและฟรี — ลองก่อนเสมอ
   try {
