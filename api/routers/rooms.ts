@@ -2,7 +2,7 @@ import { Elysia, t } from "elysia";
 import { db, ensureSchema } from "../db";
 import { requireRole, readUploadBody, forbidUnlessAdmin } from "./_lib";
 import { writeAudit } from "../services/audit";
-import { createDisplayKey, revokeDisplayKey, roomsWithDisplayKey } from "../services/display-keys";
+import { createDisplayKey, notifyDisplays, revokeDisplayKey, roomsWithDisplayKey } from "../services/display-keys";
 import { chatCompletion, isAiConfigured } from "../services/ai/provider";
 import { saveFile, readStorageFile, deleteFile, detectUploadMime, fileResponse } from "../services/storage";
 
@@ -334,6 +334,8 @@ export const roomsRoutes = new Elysia({ prefix: "/rooms" })
         return { error: "ไม่พบห้องประชุม" };
       }
       const key = await createDisplayKey(params.id, Number(user!.id));
+      // จอที่ใช้ key เดิมถูกตัดทันที
+      notifyDisplays([params.id]);
       await writeAudit({
         userId: Number(user!.id),
         username: user!.username,
@@ -346,7 +348,7 @@ export const roomsRoutes = new Elysia({ prefix: "/rooms" })
     { params: t.Object({ id: t.String() }) },
   )
 
-  // ยกเลิก key จอ TV (admin) — จอที่ใช้ key นี้หยุดแสดงข้อความสดภายใน ~15 วินาที
+  // ยกเลิก key จอ TV (admin) — จอที่ใช้ key นี้หยุดแสดงข้อความสดทันที
   .delete(
     "/:id/display-key",
     async ({ params, user, set, request }) => {
@@ -354,6 +356,7 @@ export const roomsRoutes = new Elysia({ prefix: "/rooms" })
       const denied = forbidUnlessAdmin(user, set, request);
       if (denied) return denied;
       const removed = await revokeDisplayKey(params.id).catch(() => false);
+      notifyDisplays([params.id]);
       if (removed) {
         await writeAudit({
           userId: Number(user!.id),

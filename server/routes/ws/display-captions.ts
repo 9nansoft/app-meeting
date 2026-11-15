@@ -1,7 +1,7 @@
 import { defineWebSocketHandler } from "h3";
 import { isLiveAsrEnabled } from "../../../api/services/ai/live-asr";
 import { subscribeCaptions } from "../../../api/services/ai/live-captions";
-import { currentDisplayMeeting, verifyDisplayKey } from "../../../api/services/display-keys";
+import { currentDisplayMeeting, onDisplaySync, verifyDisplayKey } from "../../../api/services/display-keys";
 import { getClientIp, writeSecurityLog } from "../../../api/services/logger";
 import { originAllowed, rejectUpgrade } from "../../utils/ws-auth";
 
@@ -10,7 +10,8 @@ import { originAllowed, rejectUpgrade } from "../../utils/ws-auth";
  *
  * - ยืนยันด้วย key ของห้อง (admin สร้างในหน้าห้องประชุม) แทน session
  * - แสดงเฉพาะการประชุมที่กำลังใช้ห้องอยู่และผู้จัดเปิด "แสดงบนจอหน้าห้อง"
- * - ตรวจซ้ำทุก 15 วินาที: เปลี่ยนการประชุม / ผู้จัดปิดการแสดง / admin ยกเลิก key → มีผลโดยไม่ต้องรีเฟรชจอ
+ * - ผู้จัดเปิด/ปิดสวิตช์ หรือ admin สร้าง/ยกเลิก key → server แจ้งจอให้ตรวจใหม่ทันที (onDisplaySync)
+ *   และตรวจซ้ำทุก 15 วินาทีเผื่อกรณีที่ไม่มีการแจ้ง (การจองเริ่ม/หมดเวลา)
  * - ไม่ส่งชื่อผู้บันทึก (จออยู่ในที่สาธารณะ)
  *
  *   server → client  { type: "meeting", active } เมื่อเริ่ม/เลิกแสดง ตามด้วย snapshot | session | partial | final
@@ -26,7 +27,10 @@ interface PeerState {
   meetingId: string | null;
   unsubscribe: (() => void) | null;
   timer: ReturnType<typeof setInterval> | null;
+  offSync: (() => void) | null;
   closed: boolean;
+  /** มีการแจ้งระหว่างกำลัง sync อยู่ — sync ซ้ำอีกรอบเมื่อเสร็จ */
+  pending: boolean;
   syncing: boolean;
 }
 const peers = new Map<string, PeerState>();
@@ -81,16 +85,25 @@ export default defineWebSocketHandler({
       meetingId: null,
       unsubscribe: null,
       timer: null,
+      offSync: null,
       closed: false,
       syncing: false,
+      pending: false,
     };
     peers.set(peer.id, state);
 
     const sync = async () => {
-      if (state.syncing || state.closed) return;
+      if (state.closed) return;
+      if (state.syncing) {
+        state.pending = true;
+        return;
+      }
       state.syncing = true;
       try {
-        await syncOnce();
+        do {
+          state.pending = false;
+          await syncOnce();
+        } while (state.pending && !state.closed);
       } finally {
         state.syncing = false;
       }
@@ -118,6 +131,7 @@ export default defineWebSocketHandler({
     };
     void sync();
     state.timer = setInterval(() => void sync(), RECHECK_MS);
+    state.offSync = onDisplaySync(state.roomId, () => void sync());
   },
 
   message(peer) {
@@ -130,6 +144,7 @@ export default defineWebSocketHandler({
     peers.delete(peer.id);
     state.closed = true;
     if (state.timer) clearInterval(state.timer);
+    state.offSync?.();
     state.unsubscribe?.();
   },
 
@@ -139,6 +154,7 @@ export default defineWebSocketHandler({
     peers.delete(peer.id);
     state.closed = true;
     if (state.timer) clearInterval(state.timer);
+    state.offSync?.();
     state.unsubscribe?.();
   },
 });

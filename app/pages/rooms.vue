@@ -384,7 +384,7 @@ async function revokeDisplayKeyLink() {
   if (result) {
     displayKeyUrl.value = "";
     displayKeyRoom.value.has_display_key = false;
-    toast.success("ยกเลิกลิงก์จอแสดงผลแล้ว — จอจะหยุดแสดงข้อความสดภายในไม่กี่วินาที");
+    toast.success("ยกเลิกลิงก์จอแสดงผลแล้ว — จอหยุดแสดงข้อความสดทันที");
   }
 }
 

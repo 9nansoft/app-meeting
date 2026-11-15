@@ -6,6 +6,7 @@ import { saveFile, deleteFile, detectUploadMime } from "../services/storage";
 import { authorizeMeeting } from "../services/access";
 import { enqueueJob } from "../services/jobs";
 import { isLiveAsrEnabled } from "../services/ai/live-asr";
+import { notifyDisplaysForMeeting } from "../services/display-keys";
 
 const MAX_AUDIO_SIZE = 200 * 1024 * 1024; // 200MB
 
@@ -27,6 +28,8 @@ export const liveRoutes = new Elysia({ prefix: "/meetings" })
         return { error: access.error };
       }
       await db("meetings").where({ id: params.id }).update({ display_live_captions: body.enabled });
+      // จอ TV ของห้องที่การประชุมนี้จองไว้เปลี่ยนทันที (ไม่ต้องรอรอบตรวจ 15 วินาที)
+      await notifyDisplaysForMeeting(params.id);
       await writeAudit({
         userId: Number(user!.id),
         username: user!.username,

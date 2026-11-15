@@ -56,3 +56,47 @@ export async function currentDisplayMeeting(roomId: string): Promise<string | nu
     .catch(() => null);
   return row?.id ?? null;
 }
+
+/* ---------- แจ้งจอให้ตรวจสถานะใหม่ทันที ---------- */
+/**
+ * จอ TV (server/routes/ws/display-captions.ts) ลงทะเบียนฟังก์ชัน sync ต่อห้องไว้ที่นี่
+ * เมื่อผู้จัดเปิด/ปิดสวิตช์ หรือ admin สร้าง/ยกเลิก key → เรียก sync ของจอในห้องนั้นทันที
+ * (ยังตรวจซ้ำทุก 15 วินาทีอยู่ เผื่อกรณีที่ไม่มีการแจ้ง เช่น การจองหมดเวลา หรือรันหลาย instance)
+ */
+type DisplaySyncer = () => void;
+const syncers = new Map<string, Set<DisplaySyncer>>();
+
+export function onDisplaySync(roomId: string, sync: DisplaySyncer): () => void {
+  let set = syncers.get(roomId);
+  if (!set) {
+    set = new Set();
+    syncers.set(roomId, set);
+  }
+  set.add(sync);
+  return () => {
+    set!.delete(sync);
+    if (!set!.size) syncers.delete(roomId);
+  };
+}
+
+export function notifyDisplays(roomIds: Iterable<string>): void {
+  for (const roomId of roomIds) {
+    for (const sync of syncers.get(roomId) ?? []) {
+      try {
+        sync();
+      } catch (err: any) {
+        console.warn("[Display] sync error:", err?.message || err);
+      }
+    }
+  }
+}
+
+/** แจ้งจอทุกห้องที่การประชุมนี้จองไว้ */
+export async function notifyDisplaysForMeeting(meetingId: string): Promise<void> {
+  if (!syncers.size) return;
+  const rows: Array<{ room_id: string }> = await db("room_bookings")
+    .where({ meeting_id: meetingId })
+    .distinct("room_id")
+    .catch(() => []);
+  notifyDisplays(rows.map((r) => r.room_id));
+}
