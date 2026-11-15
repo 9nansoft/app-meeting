@@ -73,7 +73,7 @@ if (import.meta.client && keyFromUrl && selectedRoom.value !== "all") {
 }
 
 const captionsActive = ref(false);
-const captionLines = ref<Array<{ id: number; text: string }>>([]);
+const captionLines = ref<Array<{ id: string; text: string }>>([]);
 const captionPartials = ref<Record<string, string>>({});
 const captionPartial = computed(() => Object.values(captionPartials.value).filter(Boolean).join(" "));
 let captionWs: WebSocket | null = null;
@@ -106,7 +106,9 @@ function onCaptionMessage(data: string) {
     const next = { ...captionPartials.value };
     delete next[msg.line.session];
     captionPartials.value = next;
-    captionLines.value = [...captionLines.value, { id: msg.line.id, text: msg.line.text }].slice(-CAPTION_LINES);
+    if (!captionLines.value.some((l) => l.id === msg.line.id)) {
+      captionLines.value = [...captionLines.value, { id: msg.line.id, text: msg.line.text }].slice(-CAPTION_LINES);
+    }
   } else if (msg.type === "session" && !msg.active) {
     const next = { ...captionPartials.value };
     delete next[msg.session];

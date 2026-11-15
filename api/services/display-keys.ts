@@ -1,5 +1,6 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { db } from "../db";
+import { onEvent, publishEvent } from "./pubsub";
 
 /**
  * key ของจอ TV หน้าห้อง — ให้จอที่ไม่ได้ login รับข้อความถอดเสียงสดของการประชุมในห้องนั้นได้
@@ -61,7 +62,8 @@ export async function currentDisplayMeeting(roomId: string): Promise<string | nu
 /**
  * จอ TV (server/routes/ws/display-captions.ts) ลงทะเบียนฟังก์ชัน sync ต่อห้องไว้ที่นี่
  * เมื่อผู้จัดเปิด/ปิดสวิตช์ หรือ admin สร้าง/ยกเลิก key → เรียก sync ของจอในห้องนั้นทันที
- * (ยังตรวจซ้ำทุก 15 วินาทีอยู่ เผื่อกรณีที่ไม่มีการแจ้ง เช่น การจองหมดเวลา หรือรันหลาย instance)
+ * รันหลาย instance: แจ้งต่อผ่าน Valkey (pubsub.ts) ให้จอที่ต่อ instance อื่นด้วย
+ * (ยังตรวจซ้ำทุก 15 วินาทีอยู่ เผื่อกรณีที่ไม่มีการแจ้ง เช่น การจองเริ่ม/หมดเวลา หรือ Valkey ล่ม)
  */
 type DisplaySyncer = () => void;
 const syncers = new Map<string, Set<DisplaySyncer>>();
@@ -80,6 +82,17 @@ export function onDisplaySync(roomId: string, sync: DisplaySyncer): () => void {
 }
 
 export function notifyDisplays(roomIds: Iterable<string>): void {
+  const ids = [...roomIds];
+  if (!ids.length) return;
+  notifyLocalDisplays(ids);
+  publishEvent("display-sync", { roomIds: ids });
+}
+
+onEvent("display-sync", (data: { roomIds?: unknown }) => {
+  if (Array.isArray(data?.roomIds)) notifyLocalDisplays(data.roomIds.filter((id): id is string => typeof id === "string"));
+});
+
+function notifyLocalDisplays(roomIds: string[]): void {
   for (const roomId of roomIds) {
     for (const sync of syncers.get(roomId) ?? []) {
       try {
@@ -93,7 +106,6 @@ export function notifyDisplays(roomIds: Iterable<string>): void {
 
 /** แจ้งจอทุกห้องที่การประชุมนี้จองไว้ */
 export async function notifyDisplaysForMeeting(meetingId: string): Promise<void> {
-  if (!syncers.size) return;
   const rows: Array<{ room_id: string }> = await db("room_bookings")
     .where({ meeting_id: meetingId })
     .distinct("room_id")

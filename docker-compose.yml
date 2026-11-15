@@ -14,7 +14,8 @@ services:
     env_file:
       - .env
     environment:
-      # rate limit (login/register/csp-report) ใช้ตัวนับร่วมกันใน Valkey — ถ้า Valkey ล่ม แอปใช้ตัวนับในหน่วยความจำแทน
+      # Valkey ใช้ร่วมกันทุก instance: ตัวนับ rate limit (login/register/csp-report) + pub/sub ข้อความถอดเสียงสด/จอ TV
+      # ถ้า Valkey ล่ม แอปใช้ข้อมูลในหน่วยความจำแทน (ใช้งานต่อได้ภายใน instance เดียวกัน)
       REDIS_URL: redis://:${VALKEY_PASSWORD:?ตั้ง VALKEY_PASSWORD ใน .env (สร้างด้วย openssl rand -hex 32)}@valkey:6379
     depends_on:
       - valkey
@@ -30,7 +31,7 @@ services:
         max-size: "50m"
         max-file: "3"
 
-  # Valkey (fork ของ Redis ภายใต้ license BSD) — เก็บตัวนับ rate limit เท่านั้น
+  # Valkey (fork ของ Redis ภายใต้ license BSD) — ตัวนับ rate limit + pub/sub/ข้อความย้อนหลังของการถอดเสียงสด
   # ข้อมูลเป็นของชั่วคราว (มี TTL ทุก key) จึงไม่เปิด persistence และไม่เปิดพอร์ตออก host
   valkey:
     # pin เวอร์ชัน + digest (multi-arch) — 8.1.11 เป็น security release (GHSA-f4q9-j22m-xqq9)

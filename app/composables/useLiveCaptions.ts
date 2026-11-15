@@ -12,7 +12,8 @@ import { ref, computed } from "vue";
  */
 
 export interface LiveLine {
-  id: number;
+  /** ไม่ซ้ำข้าม instance ของ server */
+  id: string;
   /** เวลาที่ server ได้ข้อความ (ISO) */
   at: string;
   text: string;
@@ -107,8 +108,8 @@ export function useLiveCaptions(meetingId: string) {
       viewerStatus.value = "connected";
       // รวมกับที่มีอยู่ (กรณีเชื่อมต่อใหม่) โดยไม่ซ้ำ id
       const seen = new Set(allLines.value.map((l) => l.id));
-      allLines.value = [...allLines.value, ...(msg.lines as LiveLine[]).filter((l) => !seen.has(l.id))].sort(
-        (a, b) => a.id - b.id,
+      allLines.value = [...allLines.value, ...(msg.lines as LiveLine[]).filter((l) => !seen.has(l.id))].sort((a, b) =>
+        a.at === b.at ? (a.id < b.id ? -1 : 1) : a.at < b.at ? -1 : 1,
       );
       sessions.value = Object.fromEntries((msg.sessions ?? []).map((s: any) => [s.session, s.by]));
       partials.value = Object.fromEntries((msg.partials ?? []).map((p: any) => [p.session, p.text]));
@@ -122,7 +123,8 @@ export function useLiveCaptions(meetingId: string) {
       partials.value = { ...partials.value, [msg.session]: msg.text || "" };
     } else if (msg.type === "final") {
       dropPartial(msg.line.session);
-      allLines.value.push(msg.line);
+      // server อาจส่ง final ที่อยู่ใน snapshot แล้วซ้ำ (event ระหว่างโหลดข้อความย้อนหลัง)
+      if (!allLines.value.some((l) => l.id === msg.line.id)) allLines.value.push(msg.line);
     }
   }
 

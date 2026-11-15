@@ -136,8 +136,8 @@ PASETO_KEY=k4.local....          # session key (สร้างใหม่ท�
 TRUST_PROXY=cloudflare           # แหล่ง IP ผู้ใช้ใน security log: cloudflare | xff | none
 SESSION_TTL_HOURS=8              # อายุ session (token + cookie)
 CSP_MODE=report-only             # CSP ของหน้าเว็บ: report-only | enforce | off (รายงานดูที่ /admin/logs)
-VALKEY_PASSWORD=...              # บังคับเมื่อใช้ docker-compose (service valkey เก็บตัวนับ rate limit) — openssl rand -hex 32
-REDIS_URL=redis://redis:6379     # (ไม่บังคับ เมื่อรันนอก compose) rate limit ร่วมกันหลาย instance — ไม่ตั้งจะนับในหน่วยความจำ
+VALKEY_PASSWORD=...              # บังคับเมื่อใช้ docker-compose (service valkey: rate limit + ถอดเสียงสดข้าม instance) — openssl rand -hex 32
+REDIS_URL=redis://redis:6379     # (ไม่บังคับ เมื่อรันนอก compose) rate limit + ข้อความถอดเสียงสดร่วมกันหลาย instance — ไม่ตั้งจะเก็บในหน่วยความจำ
 DB_HOST=127.0.0.1                # PostgreSQL
 DB_PORT=5432
 DB_USER=postgres
@@ -171,7 +171,7 @@ AI_EMBED_MODEL=text-embedding-3-small  # embedding สำหรับค้น�
 ### โหมด AI
 
 - **มี AI_API_KEY**: ใช้ LLM สรุปเอกสาร/สร้างรายงาน (บันทึก token usage ลง `ai_model_usage`) และถอดเสียงผ่าน whisper-compatible API
-- **ถอดเสียงสด** (เมื่อตั้ง `OPENTHAI_ASR_URL`): ระหว่างบันทึก หน้า live ส่งเสียงไมค์ (PCM16 16kHz) ผ่าน WebSocket `/ws/live-asr` → แอปตรวจ login + สิทธิ์การประชุม แล้วส่งต่อ `WS /v1/live` บน DGX → ข้อความขึ้นทุกครั้งที่ผู้พูดหยุด และกระจายให้**ทุกคนที่เปิดหน้า live ของการประชุมนั้น**ผ่าน `/ws/live-captions` (คนที่เข้ามาทีหลังเห็นข้อความย้อนหลังที่ยังไม่มี transcript จริงแทน) ข้อความสดไม่บันทึกลง DB — เมื่อไฟล์เสียงช่วง 5 นาทีนั้นถอดเสร็จ transcript จริงจะแสดงแทน (ถ้าถอดเสียงสดใช้ไม่ได้ การบันทึกไฟล์ยังทำงานตามปกติ)
+- **ถอดเสียงสด** (เมื่อตั้ง `OPENTHAI_ASR_URL`): ระหว่างบันทึก หน้า live ส่งเสียงไมค์ (PCM16 16kHz) ผ่าน WebSocket `/ws/live-asr` → แอปตรวจ login + สิทธิ์การประชุม แล้วส่งต่อ `WS /v1/live` บน DGX → ข้อความขึ้นทุกครั้งที่ผู้พูดหยุด และกระจายให้**ทุกคนที่เปิดหน้า live ของการประชุมนั้น**ผ่าน `/ws/live-captions` (คนที่เข้ามาทีหลังเห็นข้อความย้อนหลังที่ยังไม่มี transcript จริงแทน) ข้อความสดไม่บันทึกลง DB — เมื่อไฟล์เสียงช่วง 5 นาทีนั้นถอดเสร็จ transcript จริงจะแสดงแทน (ถ้าถอดเสียงสดใช้ไม่ได้ การบันทึกไฟล์ยังทำงานตามปกติ) — รันแอปหลาย instance ได้: ข้อความสด การแจ้งจอ TV และข้อความย้อนหลังแชร์กันผ่าน Valkey (`REDIS_URL`) โดยจำกัดจำนวนห้องที่ถอดเสียงสดพร้อมกันต่อ instance (`OPENTHAI_LIVE_MAX_SESSIONS`)
 - **ข้อความสดบนจอ TV หน้าห้อง**: admin กดปุ่มกุญแจที่การ์ดห้อง (หน้าห้องประชุม) เพื่อสร้างลิงก์ `/display?room=<id>&key=<key>` แล้วเปิดค้างบนจอ (key แสดงครั้งเดียว เก็บเฉพาะ hash, สร้างใหม่/ยกเลิกได้) — จอแสดงข้อความสดเฉพาะการประชุมที่กำลังใช้ห้องและผู้จัด/เลขา**เปิดสวิตช์ "แสดงข้อความสดบนจอหน้าห้อง"** ในหน้า live (ค่าเริ่มต้นปิด) ไม่แสดงชื่อผู้บันทึก เปลี่ยนสวิตช์/ยกเลิก key มีผลกับจอทันที
 - **มี OPENTHAI_ASR_URL**: ถอดเสียงผ่าน [OpenThai2.0 ASR](https://huggingface.co/iapp/OpenThai2.0-ASR-Streaming) ที่ self-host บน DGX แทน whisper (ไม่ต้องมี AI_API_KEY) — วิธีติดตั้งดู [deploy/asr-dgx/README.md](deploy/asr-dgx/README.md)
 - **ไม่มี AI_API_KEY**: ทำงานครบวงจรด้วย **heuristic mode** — สรุปแบบ extractive จากข้อความ PDF จริง (ยังอ้างอิงเลขหน้าได้) และ transcript จะเป็นข้อความแจ้งสถานะชัดเจนว่าเป็นโหมดจำลอง — ทุกผลลัพธ์ mark `needs_review` ให้เลขายืนยันเสมอ
@@ -192,7 +192,8 @@ AI_EMBED_MODEL=text-embedding-3-small  # embedding สำหรับค้น�
 │     ├─ ai/provider.ts        # OpenAI-compatible client (chat + STT)
 │     ├─ ai/openthai-asr.ts    # ถอดเสียงผ่าน OpenThai ASR ที่ self-host (POST /v1/transcribe)
 │     ├─ ai/live-asr.ts        # ถอดเสียงสด: ส่งต่อเสียงไป WS /v1/live แล้วส่งข้อความกลับ
-│     ├─ ai/live-captions.ts   # กระจายข้อความสดให้ผู้ชมทุกคนของการประชุม (in-process)
+│     ├─ ai/live-captions.ts   # กระจายข้อความสดให้ผู้ชมทุกคนของการประชุม (ข้าม instance ผ่าน Valkey)
+│     ├─ pubsub.ts             # pub/sub + ข้อความย้อนหลังใน Valkey (Bun.RedisClient) — ไม่ตั้ง REDIS_URL = process เดียว
 │     ├─ display-keys.ts       # key จอ TV ต่อห้อง + หาการประชุมที่จอควรแสดงข้อความสด
 │     ├─ ai/heuristic.ts       # fallback ออฟไลน์
 │     ├─ ai/handlers.ts        # โลจิกงาน AI 4 ประเภท
@@ -254,7 +255,6 @@ bun x nuxt typecheck            # typecheck ทั้งโปรเจกต์
 - **LINE OA / Email**: เพิ่ม provider ใน `api/services/notifications.ts` (โครง channel รองรับแล้ว)
 - **MinIO/S3**: แทนที่ implementation ใน `api/services/storage.ts`
 - **Speaker diarization**: ตั้ง `OPENTHAI_ASR_MODE=meeting` ได้ speaker labels แล้ว แต่เลขผู้พูดนับแยกในแต่ละไฟล์ 5 นาที (ผู้พูด 1 ของช่วงแรกกับช่วงถัดไปอาจเป็นคนละคน) — ต้องจับคู่ผู้พูดข้ามช่วงต่อ
-- **ถอดเสียงสดหลาย instance**: hub ข้อความสด (`api/services/ai/live-captions.ts`) อยู่ใน process เดียว — ถ้ารันแอปหลาย instance ต้องเปลี่ยนเป็น Valkey pub/sub (ตอนนี้ docker-compose รัน instance เดียว)
 - **pgvector**: ปัจจุบันเก็บ embedding เป็น jsonb + คำนวณ cosine ใน JS (เพียงพอสำหรับหลักพัน chunks) — หากเอกสารโตขึ้นมาก เปลี่ยนคอลัมน์เป็น `vector` ของ pgvector และใช้ index HNSW/IVFFlat
 - **Redis + BullMQ**: แทนที่ `api/services/jobs.ts` เมื่อต้อง scale worker แยก instance
 
