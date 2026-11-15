@@ -1,4 +1,5 @@
 import { Elysia, t } from "elysia";
+import dayjs from "dayjs";
 import { db, ensureSchema } from "../db";
 import { requireRole, readUploadBody } from "./_lib";
 import { writeAudit } from "../services/audit";
@@ -180,9 +181,15 @@ export const liveRoutes = new Elysia({ prefix: "/meetings" })
       if (query.after) q.where("created_at", ">", query.after);
       const segments = await q;
       // ended_at/duration_seconds: หน้า live ใช้เอาข้อความถอดเสียงสดที่ transcript จริงครอบคลุมแล้วออก
-      const recordings = await db("meeting_recordings")
+      const rows = await db("meeting_recordings")
         .where({ meeting_id: params.id })
         .select("id", "status", "ended_at", "duration_seconds");
+      // type parser ของ pg แปลง timestamptz เป็น "YYYY-MM-DD HH:mm:ss" ตามเวลาท้องถิ่นของ server (ไม่มี timezone)
+      // เบราว์เซอร์จะอ่านเป็นเวลาท้องถิ่นของตัวเองแล้วคลาด — ส่ง ISO (UTC) ให้เทียบกับเวลาของข้อความสดได้ถูก
+      const recordings = rows.map((r: any) => ({
+        ...r,
+        ended_at: r.ended_at ? dayjs(r.ended_at).toISOString() : null,
+      }));
       return {
         segments,
         recordings,
